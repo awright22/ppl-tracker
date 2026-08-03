@@ -1,0 +1,20 @@
+{
+  "name": "ppl-workout-pwa",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Installable PWA build of the PPL workout tracker (outputs to ../docs for GitHub Pages)",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@tailwindcss/browser": "^4.1.11",
+    "lucide-react": "^0.539.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.15.4"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.8"
+  }
+}
