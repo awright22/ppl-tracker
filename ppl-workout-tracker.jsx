@@ -977,6 +977,8 @@ export default function App() {
   return (
     <div className="min-h-screen bg-black text-zinc-100">
       <style>{css}</style>
+      {/* Covers the iOS status-bar zone so content never scrolls under the clock. */}
+      <div className="fixed inset-x-0 top-0 z-40 pointer-events-none" style={{ height: "env(safe-area-inset-top)", background: activeTheme.pageGlass }} />
       <div className="mx-auto max-w-md px-4 pb-32 pt-4">
         {tab === "workout" && (
           draft ? (
@@ -1252,7 +1254,7 @@ function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility, push
 
   return (
     <div className="flex flex-col gap-4">
-      <header className="sticky top-0 z-20 -mx-4 border-b border-zinc-800 bg-black/90 px-4 py-3 backdrop-blur">
+      <header className="sticky z-20 -mx-4 border-b border-zinc-800 bg-black/90 px-4 py-3 backdrop-blur" style={{ top: "env(safe-area-inset-top)" }}>
         <div className="flex items-center justify-between">
           <div>
             <div className="text-lg font-bold">
@@ -1381,9 +1383,9 @@ function MobilityScreen({ title, subtitle, sections, doneLabel, onClose }) {
     });
   };
   return (
-    <div className="fixed inset-0 z-40 overflow-y-auto bg-black" style={{ paddingTop: "env(safe-area-inset-top)" }}>
-      <div className="mx-auto max-w-md px-4 pb-16 pt-4">
-        <header className="sticky top-0 z-10 -mx-4 border-b border-zinc-800 bg-black/90 px-4 py-3 backdrop-blur">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black">
+      <div className="mx-auto max-w-md px-4 pb-16 pt-4" style={{ paddingBottom: "calc(4rem + env(safe-area-inset-bottom))" }}>
+        <header className="sticky top-0 z-10 -mx-4 border-b border-zinc-800 bg-black/90 px-4 py-3 backdrop-blur" style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}>
           <div className="flex items-center gap-2">
             <button onClick={onClose} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-zinc-400 active:bg-zinc-800" aria-label="back">
               <ChevronLeft size={22} />
@@ -1832,9 +1834,9 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, pus
   const s = editing ? edit : session;
 
   return (
-    <div className="fixed inset-0 z-40 overflow-y-auto bg-black" style={{ paddingTop: "env(safe-area-inset-top)" }}>
-      <div className="mx-auto max-w-md px-4 pb-32 pt-4">
-        <header className="sticky top-0 z-10 -mx-4 border-b border-zinc-800 bg-black/90 px-4 py-3 backdrop-blur">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black">
+      <div className="mx-auto max-w-md px-4 pb-32 pt-4" style={{ paddingBottom: "calc(8rem + env(safe-area-inset-bottom))" }}>
+        <header className="sticky top-0 z-10 -mx-4 border-b border-zinc-800 bg-black/90 px-4 py-3 backdrop-blur" style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}>
           <div className="flex items-center justify-between gap-2">
             <button onClick={onClose} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-zinc-400 active:bg-zinc-800" aria-label="back">
               <ChevronLeft size={22} />
