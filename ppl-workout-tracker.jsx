@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer,
 } from "recharts";
@@ -188,6 +188,63 @@ const LOAD_LABEL = {
 };
 const LOAD_TYPES = ["db-pair", "db-single", "stack", "machine", "plate-loaded", "bodyweight-plus"];
 const CHART = { line: "#65a30d", vol: "#71717a", grid: "#27272a", tick: "#71717a", surface: "#18181b", cursor: "#3f3f46" };
+
+/* ---------- themes (designed + WCAG-verified) ----------
+   Base classes stay dark-theme Tailwind; the active theme overrides them via
+   generated CSS. "paper" is the light default; "dark" is the refined dark. */
+const THEMES = {
+  paper: {
+    scheme: "light",
+    page: "#F3F0E8", pageGlass: "#F3F0E8EB", card: "#FFFDF8", well: "#EDE8DC",
+    btn: "#E6E0D2", segActive: "#938E7C", line: "#E2DACA", line2: "#CCC3AF",
+    ink: "#221F19", ink2: "#443F33", ink3: "#5D5646", ink4: "#6A634F", ink5: "#979078",
+    accent: "#4F6E11", onAccent: "#FDFCF7", accentText: "#3E5610",
+    warn: "#C0620C", warnText: "#96490A", danger: "#A62B22", success: "#1C7A54",
+    chartLine: "#4F6E11", chartVol: "#8B8471", chartGrid: "#E6DFD0", chartTick: "#6A634F",
+  },
+  dark: {
+    scheme: "dark",
+    page: "#121215", pageGlass: "#121215EB", card: "#1C1C20", well: "#161619",
+    btn: "#27272C", segActive: "#3E3E45", line: "#2C2C32", line2: "#3C3C44",
+    ink: "#FAFAFA", ink2: "#E3E3E8", ink3: "#B0B0B8", ink4: "#90909A", ink5: "#6E6E78",
+    accent: "#A3E635", onAccent: "#0C1004", accentText: "#BEF264",
+    warn: "#FBBF24", warnText: "#FCD34D", danger: "#F87171", success: "#34D399",
+    chartLine: "#65A30D", chartVol: "#8A8A94", chartGrid: "#2E2E35", chartTick: "#9C9CA6",
+  },
+};
+
+function themeCss(t) {
+  return `
+html{color-scheme:${t.scheme}}
+.bg-black{background:${t.page}!important}
+[class*="bg-black/90"],[class*="bg-zinc-950/90"]{background:${t.pageGlass}!important}
+.bg-zinc-900{background:${t.card}!important}
+.bg-zinc-950{background:${t.well}!important}
+.bg-zinc-800{background:${t.btn}!important}
+.bg-zinc-700{background:${t.segActive}!important}
+[class*="active:bg-zinc-800"]:active,[class*="active:bg-zinc-700"]:active{background:${t.line2}!important}
+[class*="active:bg-lime-300"]:active{background:${t.accent}!important}
+.border-zinc-800{border-color:${t.line}!important}
+.border-zinc-700,.border-zinc-600{border-color:${t.line2}!important}
+[class*="divide-zinc-800"]>*{border-color:${t.line}!important}
+.text-zinc-50,.text-zinc-100{color:${t.ink}!important}
+.text-zinc-200,.text-zinc-300{color:${t.ink2}!important}
+.text-zinc-400{color:${t.ink3}!important}
+.text-zinc-500{color:${t.ink4}!important}
+.text-zinc-600{color:${t.ink5}!important}
+.bg-lime-400{background:${t.accent}!important;color:${t.onAccent}!important}
+.bg-lime-400 .text-black{color:${t.onAccent}!important}
+.text-lime-400,.text-lime-300{color:${t.accentText}!important}
+.border-lime-400,[class*="border-lime-400/50"],[class*="border-lime-400/40"]{border-color:${t.accent}!important}
+.text-amber-400,.text-amber-300{color:${t.warnText}!important}
+[class*="border-amber-400"]{border-color:${t.warn}!important}
+.text-red-400,.text-red-300{color:${t.danger}!important}
+.border-red-500,[class*="border-red-900"]{border-color:${t.danger}!important}
+.bg-red-500{background:${t.danger}!important}
+.bg-green-500{background:${t.success}!important}
+.text-green-400{color:${t.success}!important}
+`;
+}
 
 const round2 = (n) => Math.round(n * 100) / 100;
 const fmtW = (n) => (n == null || Number.isNaN(Number(n)) ? "—" : String(round2(Number(n))));
@@ -894,10 +951,24 @@ export default function App() {
     persist("config", next, "settings");
   }, [persist]);
 
+  /* --- theme --- */
+  const themeKey = config && config.ui && config.ui.theme === "dark" ? "dark" : "paper";
+  const activeTheme = THEMES[themeKey];
+  const css = useMemo(() => themeCss(THEMES[themeKey]), [themeKey]);
+  useEffect(() => {
+    try {
+      document.documentElement.style.background = activeTheme.page;
+      document.body.style.background = activeTheme.page;
+      const m = document.querySelector('meta[name="theme-color"]');
+      if (m) m.setAttribute("content", activeTheme.page);
+    } catch (e) { /* non-browser */ }
+  }, [activeTheme]);
+
   /* --- render --- */
   if (phase === "loading" || !config) {
     return (
       <div className="min-h-screen bg-black text-zinc-100">
+        <style>{css}</style>
         <div className="mx-auto max-w-md px-4 pt-24"><Spinner label="Loading your training data…" /></div>
       </div>
     );
@@ -905,6 +976,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-black text-zinc-100">
+      <style>{css}</style>
       <div className="mx-auto max-w-md px-4 pb-32 pt-4">
         {tab === "workout" && (
           draft ? (
@@ -938,7 +1010,7 @@ export default function App() {
           <ProgressScreen config={config} index={index} loadSession={loadSession} onOpen={(id) => setViewer({ id })} />
         )}
         {tab === "settings" && (
-          <SettingsScreen config={config} saveConfig={saveConfig} />
+          <SettingsScreen config={config} saveConfig={saveConfig} themeKey={themeKey} />
         )}
       </div>
 
@@ -1911,6 +1983,8 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, pus
 /* ---------- progress ---------- */
 
 function ProgressScreen({ config, index, loadSession, onOpen }) {
+  const T = THEMES[config && config.ui && config.ui.theme === "dark" ? "dark" : "paper"];
+  const chartTokens = { grid: T.chartGrid, tick: T.chartTick, surface: T.card, cursor: T.line2 };
   const gymEntries = index.filter((e) => e.mode === "gym");
   const firstWithData = () => {
     for (const day of DAY_KEYS) {
@@ -1996,7 +2070,8 @@ function ProgressScreen({ config, index, loadSession, onOpen }) {
             sub={exCfg && exCfg.loadType ? LOAD_LABEL[exCfg.loadType] : null}
             data={points}
             dataKey="weight"
-            color={CHART.line}
+            color={T.chartLine}
+            chart={chartTokens}
             height={224}
             onClick={openFromChart}
           />
@@ -2018,7 +2093,8 @@ function ProgressScreen({ config, index, loadSession, onOpen }) {
             }
             data={points}
             dataKey={metric}
-            color={metric === "e1rm" ? CHART.line : CHART.vol}
+            color={metric === "e1rm" ? T.chartLine : T.chartVol}
+            chart={chartTokens}
             height={144}
             onClick={openFromChart}
           />
@@ -2039,7 +2115,13 @@ function ChartTip({ active, payload, label, unit }) {
   );
 }
 
-function ChartCard({ title, sub, headerRight, data, dataKey, color, height, onClick }) {
+function ChartCard({ title, sub, headerRight, data, dataKey, color, height, onClick, chart }) {
+  const C = {
+    grid: (chart && chart.grid) || CHART.grid,
+    tick: (chart && chart.tick) || CHART.tick,
+    surface: (chart && chart.surface) || CHART.surface,
+    cursor: (chart && chart.cursor) || CHART.cursor,
+  };
   return (
     <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-3">
       <div className="flex items-center gap-2 px-1 pb-2">
@@ -2051,32 +2133,32 @@ function ChartCard({ title, sub, headerRight, data, dataKey, color, height, onCl
       </div>
       <ResponsiveContainer width="100%" height={height}>
         <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }} onClick={onClick}>
-          <CartesianGrid vertical={false} stroke={CHART.grid} />
+          <CartesianGrid vertical={false} stroke={C.grid} />
           <XAxis
             dataKey="label"
-            tick={{ fill: CHART.tick, fontSize: 11 }}
+            tick={{ fill: C.tick, fontSize: 11 }}
             tickLine={false}
-            axisLine={{ stroke: CHART.grid }}
+            axisLine={{ stroke: C.grid }}
             minTickGap={28}
             padding={{ left: 8, right: 8 }}
           />
           <YAxis
             width={40}
             domain={["auto", "auto"]}
-            tick={{ fill: CHART.tick, fontSize: 11 }}
+            tick={{ fill: C.tick, fontSize: 11 }}
             tickLine={false}
             axisLine={false}
             tickCount={5}
           />
-          <Tooltip content={<ChartTip />} cursor={{ stroke: CHART.cursor, strokeWidth: 1 }} />
+          <Tooltip content={<ChartTip />} cursor={{ stroke: C.cursor, strokeWidth: 1 }} />
           <Line
             type="monotone"
             dataKey={dataKey}
             stroke={color}
             strokeWidth={2}
             strokeLinecap="round"
-            dot={{ r: 4, fill: color, stroke: CHART.surface, strokeWidth: 2 }}
-            activeDot={{ r: 9, fill: color, stroke: CHART.surface, strokeWidth: 2 }}
+            dot={{ r: 4, fill: color, stroke: C.surface, strokeWidth: 2 }}
+            activeDot={{ r: 9, fill: color, stroke: C.surface, strokeWidth: 2 }}
             isAnimationActive={false}
           />
         </LineChart>
@@ -2087,7 +2169,7 @@ function ChartCard({ title, sub, headerRight, data, dataKey, color, height, onCl
 
 /* ---------- settings ---------- */
 
-function SettingsScreen({ config, saveConfig }) {
+function SettingsScreen({ config, saveConfig, themeKey }) {
   const [mode, setMode] = useState("gym");
   const [day, setDay] = useState("push");
   const [editingId, setEditingId] = useState(null);
@@ -2128,6 +2210,15 @@ function SettingsScreen({ config, saveConfig }) {
         <h1 className="text-2xl font-bold">Settings</h1>
         <div className="text-xs text-zinc-500">Edit your exercises — add Phase 2 movements here anytime</div>
       </header>
+
+      <div className="flex flex-col gap-2">
+        <div className="px-1 text-xs font-semibold uppercase tracking-widest text-zinc-500">Appearance</div>
+        <Seg
+          value={themeKey || "paper"}
+          onChange={(v) => saveConfig({ ...config, ui: { ...(config.ui || {}), theme: v } })}
+          options={[{ value: "paper", label: "Light" }, { value: "dark", label: "Dark" }]}
+        />
+      </div>
 
       <Seg value={mode} onChange={(v) => { setMode(v); setEditingId(null); }} options={[{ value: "gym", label: "Gym" }, { value: "calisthenics", label: "Bodyweight" }]} />
       <Seg value={day} onChange={(v) => { setDay(v); setEditingId(null); }} options={DAY_KEYS.map((d) => ({ value: d, label: DAY_LABEL[d] }))} />
