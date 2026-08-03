@@ -6,7 +6,7 @@ import {
   Dumbbell, History as HistoryIcon, TrendingUp, Settings as SettingsIcon,
   Plus, Minus, X, Check, ChevronLeft, ChevronDown, ChevronUp, MoreVertical,
   Trash2, Pencil, Ban, RotateCcw, AlertTriangle, Loader2, ArrowUp, ArrowDown,
-  Heart,
+  Heart, Flame, ChevronRight,
 } from "lucide-react";
 
 /* ============================================================
@@ -67,7 +67,35 @@ const store = {
 
 /* ---------- seed config ---------- */
 
-const SEED_CONFIG = {
+export const SEED_CONFIG = {
+  mobility: {
+    general: [
+      { id: "mob-catcow", name: "Cat-Cow", dose: "×10 slow" },
+      { id: "mob-wgs", name: "World's Greatest Stretch", dose: "×5/side" },
+      { id: "mob-hipswing", name: "Hip Circles + Leg Swings", dose: "×10 each" },
+      { id: "mob-armcircle", name: "Arm Circles", dose: "×10 fwd/back" },
+    ],
+    push: [
+      { id: "wu-wallslide", name: "Wall Slides", dose: "×10" },
+      { id: "wu-scappush", name: "Scap Push-Ups", dose: "×10" },
+      { id: "wu-yt", name: "Prone Y-T Raises", dose: "×8 each" },
+      { id: "wu-push-ramp", name: "Ramp-up: first lift", dose: "50% ×8 · 75% ×4", note: "Then straight into working sets", gymOnly: true },
+    ],
+    pull: [
+      { id: "wu-hang", name: "Dead Hang", dose: "20–30s" },
+      { id: "wu-scapull", name: "Scapular Pulls", dose: "×8" },
+      { id: "wu-facepull-light", name: "Light Face Pulls", dose: "×15" },
+      { id: "wu-pull-ramp", name: "Ramp-up: first lift", dose: "50% ×8 · 75% ×4", note: "Then straight into working sets", gymOnly: true },
+    ],
+    legs: [
+      { id: "wu-9090", name: "90/90 Hip Switches", dose: "×6/side" },
+      { id: "wu-bridge", name: "Glute Bridges", dose: "×12" },
+      { id: "wu-birddog", name: "Bird-Dogs", dose: "×8/side", note: "Slow — brace, don't arch" },
+      { id: "wu-sideplank", name: "Side Plank", dose: "20s/side", note: "Right QL: ease in, stop if it flares" },
+      { id: "wu-bwsquat", name: "Bodyweight Squats", dose: "×10" },
+      { id: "wu-legs-ramp", name: "Ramp-up: first lift", dose: "50% ×8 · 75% ×4", note: "Then straight into working sets", gymOnly: true },
+    ],
+  },
   days: {
     push: [
       { id: "bench-db", name: "DB Bench Press", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 70 },
@@ -522,6 +550,10 @@ export default function App() {
       if (!c || !c.days || !c.calisthenics) {
         c = SEED_CONFIG;
         persist("config", SEED_CONFIG, "starting config");
+      } else if (!c.mobility) {
+        // Older stored configs predate the warm-up section — merge the seed in.
+        c = { ...c, mobility: SEED_CONFIG.mobility };
+        persist("config", c, "warm-ups");
       }
       const list = Array.isArray(idx) ? [...idx].sort(byDateDesc) : [];
       setConfig(c);
@@ -743,6 +775,7 @@ export default function App() {
               mutateDraft={mutateDraft}
               onFinish={finishWorkout}
               onDiscard={discardDraft}
+              mobility={config.mobility}
             />
           ) : (
             <HomeScreen
@@ -946,9 +979,10 @@ function HomeScreen({ index, mode, setMode, onStart, starting, qlPrompt, answerQ
 
 /* ---------- logging ---------- */
 
-function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard }) {
+function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility }) {
   const [armedDiscard, setArmedDiscard] = useArmed();
   const [finishing, setFinishing] = useState(false);
+  const [showMobility, setShowMobility] = useState(false);
   const totalSets = countSets(draft.exercises);
 
   const doFinish = async () => {
@@ -978,9 +1012,27 @@ function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard }) {
         </div>
       </header>
 
+      {mobility && (
+        <button
+          onClick={() => setShowMobility(true)}
+          className={`flex items-center gap-3 rounded-2xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-left active:border-zinc-600 ${TRANS}`}
+        >
+          <Flame size={18} className="shrink-0 text-lime-400" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-zinc-100">Warm-up & mobility</div>
+            <div className="text-xs text-zinc-500">Daily routine + {DAY_LABEL[draft.dayType]}-day prep</div>
+          </div>
+          <ChevronRight size={16} className="shrink-0 text-zinc-600" />
+        </button>
+      )}
+
       {draft.exercises.map((ex, i) => (
         <ExerciseCard key={ex.exerciseId} ex={ex} idx={i} count={draft.exercises.length} mode={draft.mode} mutateDraft={mutateDraft} />
       ))}
+
+      {showMobility && (
+        <MobilityScreen dayType={draft.dayType} mode={draft.mode} mobility={mobility} onClose={() => setShowMobility(false)} />
+      )}
 
       <button
         onClick={doFinish}
@@ -997,6 +1049,74 @@ function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard }) {
       >
         {armedDiscard ? "Tap again to discard workout" : "Discard workout"}
       </button>
+    </div>
+  );
+}
+
+function MobilityScreen({ dayType, mode, mobility, onClose }) {
+  const [done, setDone] = useState(() => new Set());
+  const toggle = (id) => {
+    setDone((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const dayItems = (mobility[dayType] || []).filter((it) => !(mode === "calisthenics" && it.gymOnly));
+  const sections = [
+    { title: "Every day", items: mobility.general || [] },
+    { title: `${DAY_LABEL[dayType] || dayType}-day prep`, items: dayItems },
+  ];
+  return (
+    <div className="fixed inset-0 z-40 overflow-y-auto bg-black" style={{ paddingTop: "env(safe-area-inset-top)" }}>
+      <div className="mx-auto max-w-md px-4 pb-16 pt-4">
+        <header className="sticky top-0 z-10 -mx-4 border-b border-zinc-800 bg-black/90 px-4 py-3 backdrop-blur">
+          <div className="flex items-center gap-2">
+            <button onClick={onClose} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-zinc-400 active:bg-zinc-800" aria-label="back">
+              <ChevronLeft size={22} />
+            </button>
+            <div>
+              <div className="text-base font-bold">Warm-up & mobility</div>
+              <div className="text-xs text-zinc-500">{DAY_LABEL[dayType] || dayType} day · ~5 min · check them off as you go</div>
+            </div>
+          </div>
+        </header>
+
+        <div className="flex flex-col gap-4 pt-4">
+          {sections.map((sec) => (
+            <section key={sec.title}>
+              <div className="px-1 pb-2 text-xs font-semibold uppercase tracking-widest text-zinc-500">{sec.title}</div>
+              <div className="flex flex-col divide-y divide-zinc-800 rounded-2xl border border-zinc-800 bg-zinc-900">
+                {sec.items.length === 0 && (
+                  <div className="px-4 py-4 text-sm text-zinc-600">Nothing here yet.</div>
+                )}
+                {sec.items.map((it) => {
+                  const checked = done.has(it.id);
+                  return (
+                    <button key={it.id} onClick={() => toggle(it.id)} className="flex items-start gap-3 px-4 py-3 text-left">
+                      <span
+                        className={`mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border ${TRANS} ${
+                          checked ? "border-lime-400 bg-lime-400 text-black" : "border-zinc-600"
+                        }`}
+                      >
+                        {checked ? <Check size={14} /> : null}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className={`block text-sm font-semibold ${checked ? "text-zinc-500 line-through" : "text-zinc-100"}`}>{it.name}</span>
+                        {it.note ? <span className="block text-xs text-zinc-500">{it.note}</span> : null}
+                      </span>
+                      <span className="shrink-0 text-sm font-semibold tabular-nums text-zinc-400">{it.dose}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
+          <button onClick={onClose} className={`h-12 rounded-2xl bg-lime-400 text-sm font-bold text-black active:bg-lime-300 ${TRANS}`}>
+            Done — start lifting
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
