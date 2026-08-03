@@ -6,7 +6,7 @@ import {
   Dumbbell, History as HistoryIcon, TrendingUp, Settings as SettingsIcon,
   Plus, Minus, X, Check, ChevronLeft, ChevronDown, ChevronUp, MoreVertical,
   Trash2, Pencil, Ban, RotateCcw, AlertTriangle, Loader2, ArrowUp, ArrowDown,
-  Heart, Flame, ChevronRight,
+  Heart, Flame, ChevronRight, Shield,
 } from "lucide-react";
 
 /* ============================================================
@@ -68,33 +68,62 @@ const store = {
 /* ---------- seed config ---------- */
 
 export const SEED_CONFIG = {
+  // QL-recovery program: daily reset + per-day warm-ups + per-day core (after lifts).
   mobility: {
+    v: 2,
     general: [
-      { id: "mob-catcow", name: "Cat-Cow", dose: "×10 slow" },
-      { id: "mob-wgs", name: "World's Greatest Stretch", dose: "×5/side" },
-      { id: "mob-hipswing", name: "Hip Circles + Leg Swings", dose: "×10 each" },
-      { id: "mob-armcircle", name: "Arm Circles", dose: "×10 fwd/back" },
+      { id: "dr-9090", name: "90/90 Breathing", dose: "1 min", note: "Feet on wall. Inhale 4s, exhale 8s." },
+      { id: "dr-psoas", name: "Supine Psoas Stretch", dose: "R 90s · L 60s", note: "Edge of bed, opposite knee to chest, leg hangs." },
+      { id: "dr-clam", name: "Right-Side Clam", dose: "45s", note: "Lie on L side. Open R knee, 3s hold, 10 reps." },
+      { id: "dr-fig4", name: "Supine Figure-4", dose: "60s/side", note: "Ankle over knee, pull thigh in." },
+      { id: "dr-hamstring", name: "Supine Hamstring Stretch", dose: "45s/side", note: "Towel around foot, leg to ceiling." },
+      { id: "dr-rock", name: "Knees-to-Chest Rock", dose: "45s", note: "Hug knees, rock side to side." },
+      { id: "dr-twist", name: "Supine Spinal Twist", dose: "60s/side", note: "Knee across body, opposite arm out." },
+      { id: "dr-butterfly", name: "Supine Butterfly", dose: "60s", note: "Progress check: soles together, knees fall out. R vs L symmetry." },
     ],
     push: [
-      { id: "wu-wallslide", name: "Wall Slides", dose: "×10" },
-      { id: "wu-scappush", name: "Scap Push-Ups", dose: "×10" },
-      { id: "wu-yt", name: "Prone Y-T Raises", dose: "×8 each" },
-      { id: "wu-push-ramp", name: "Ramp-up: first lift", dose: "50% ×8 · 75% ×4", note: "Then straight into working sets", gymOnly: true },
+      { id: "wu-p-breath", name: "90/90 Breathing", dose: "5–8 breaths", note: "Feet on wall, hips/knees 90°. Press heels in. Exhale mouth 5–8s, sigh at end. Inhale nose into lateral ribs. Pause 3–5s after exhale." },
+      { id: "wu-p-hipflexor", name: "Hip Flexor Stretch (R)", dose: "1×30s", note: "Long lunge, R foot back. Tuck tailbone + squeeze R glute first, then shift forward. R arm overhead & slightly across." },
+      { id: "wu-p-pec", name: "LB Pec Release", dose: "45s/side", note: "Face wall, ball below collarbone near shoulder. Lean in, roll slowly. Hold tender spots 5–10s. Focus pec minor area." },
+      { id: "wu-p-tspine", name: "Foam Roll T-Spine", dose: "45s", note: "Roller under mid-back, hands behind head. Extend over roller. Move 1 inch per segment. Low back stays still." },
+      { id: "wu-p-needle", name: "Thread-the-Needle", dose: "6/side", note: "Hands & knees. Slide R hand under L arm, R shoulder drops. Reverse — rotate R hand to ceiling. Slow, feel mid-back." },
+      { id: "wu-p-extrot", name: "Cable Ext. Rotations", dose: "15/arm", note: "Cable at elbow height, lightest. Sideways, far hand. Pin elbow at 90°. Rotate forearm out. Slow return.", gymOnly: true },
+      { id: "wu-p-facepull", name: "Cable Face Pulls", dose: "15–20", note: "Cable face height, light. Rope, palms down. Pull to face, split rope. Elbows high & wide. Squeeze scaps 1s.", gymOnly: true },
+      { id: "wu-p-scappush", name: "Scapular Push-Ups", dose: "10", note: "Push-up position, arms locked. Sink chest between scaps, push floor away, round upper back. Only scaps move." },
+      { id: "wu-p-pushup", name: "Push-Ups", dose: "8–10", note: "Hands wider than shoulders. Chest to floor. Scaps squeeze down, spread at top. Bench rehearsal." },
     ],
     pull: [
-      { id: "wu-hang", name: "Dead Hang", dose: "20–30s" },
-      { id: "wu-scapull", name: "Scapular Pulls", dose: "×8" },
-      { id: "wu-facepull-light", name: "Light Face Pulls", dose: "×15" },
-      { id: "wu-pull-ramp", name: "Ramp-up: first lift", dose: "50% ×8 · 75% ×4", note: "Then straight into working sets", gymOnly: true },
+      { id: "wu-l-breath", name: "90/90 Breathing", dose: "5–8 breaths", note: "Feet on wall, hips/knees 90°. Press heels in. Exhale mouth 5–8s, sigh at end. Inhale nose into lateral ribs. Pause 3–5s after exhale." },
+      { id: "wu-l-hipflexor", name: "Hip Flexor Stretch (R)", dose: "1×30s", note: "Long lunge, R foot back. Tuck tailbone + squeeze R glute first, then shift forward. R arm overhead & slightly across." },
+      { id: "wu-l-qlrelease", name: "LB QL Release (R)", dose: "~2 min", badge: "Phase out", note: "Side-lying R side, ball above iliac crest, lateral to erectors. 5/10 pressure. Hold spots 20–30s. Stay below 12th rib. Deep sick ache = kidney → reposition." },
+      { id: "wu-l-lats", name: "Foam Roll Lats", dose: "45s/side", note: "Side-lying, roller under armpit. Arm overhead, thumb up. Roll armpit to mid-ribcage. Hold tender spots 5–10s." },
+      { id: "wu-l-tspine", name: "Foam Roll T-Spine", dose: "45s", note: "Roller under mid-back, hands behind head. Extend over roller. Move 1 inch per segment. Low back stays still." },
+      { id: "wu-l-deadbug", name: "Dead Bugs", dose: "2×8/side", note: "On back, arms up, knees 90°. Press low back flat. Lower opposite arm/leg. Teaches bracing for rows." },
+      { id: "wu-l-bandwalk", name: "Lateral Band Walk", dose: "10 steps/way", note: "Mini band above ankles, quarter-squat. Lead with heel, toes forward. Control trail leg. Stay low." },
+      { id: "wu-l-quadrot", name: "Quad. T-Spine Rotations", dose: "8/side", note: "Hands & knees, R hand behind head. R elbow to L wrist, then to ceiling. Eyes follow. Hips stay square." },
+      { id: "wu-l-scapdown", name: "Cable Scap Pull-Downs", dose: "12–15", note: "Cable high, lightest, wide bar. Arms extended. Pull scaps down & together without bending elbows. Hold 1s.", gymOnly: true },
+      { id: "wu-l-sapd", name: "Cable SA Pull-Downs", dose: "12–15", note: "Cable high, light. Arms at shoulder height. Pull to thighs in arc, arms straight. Squeeze lats 1s. Slow return.", gymOnly: true },
+      { id: "wu-l-facepull", name: "Cable Face Pulls", dose: "15", note: "Cable face height, light. Rope, palms down. Pull to face, split rope. Elbows high & wide. Squeeze scaps 1s.", gymOnly: true },
     ],
-    legs: [
-      { id: "wu-9090", name: "90/90 Hip Switches", dose: "×6/side" },
-      { id: "wu-bridge", name: "Glute Bridges", dose: "×12" },
-      { id: "wu-birddog", name: "Bird-Dogs", dose: "×8/side", note: "Slow — brace, don't arch" },
-      { id: "wu-sideplank", name: "Side Plank", dose: "20s/side", note: "Right QL: ease in, stop if it flares" },
-      { id: "wu-bwsquat", name: "Bodyweight Squats", dose: "×10" },
-      { id: "wu-legs-ramp", name: "Ramp-up: first lift", dose: "50% ×8 · 75% ×4", note: "Then straight into working sets", gymOnly: true },
-    ],
+    legs: [],
+    core: {
+      push: [
+        { id: "co-p-deadbug", name: "Dead Bugs", dose: "2×10/side", note: "On back, arms up, knees 90°. Press low back flat. Lower opposite arm/leg. Only go as far as back stays glued." },
+        { id: "co-p-pallof", name: "Overhead Pallof Press", dose: "2×10/side · 3s hold", note: "Cable chest height, stand perpendicular. Press overhead, hold 3s. Resist rotation + lateral pull.", gymOnly: true },
+        { id: "co-p-sideplank", name: "Side Plank (R down)", dose: "2×30–45s", note: "Forearm down, elbow under shoulder. Knees or straight leg. Stack hips, don't sag. L side: 1 set." },
+      ],
+      pull: [
+        { id: "co-l-mcgill", name: "McGill Curl-Up", dose: "2×8 · 10s holds", note: "On back, 1 knee bent, 1 straight. Hands under low back. Lift head/shoulders just off floor, hold 10s. Don't flatten back." },
+        { id: "co-l-suitcase", name: "Suitcase Carry", dose: "3×30–40yd/side", note: "Single DB/KB at side, start 25% BW. Walk slow — ribs over pelvis, no lean. L hand = trains R side anti-lateral-flexion.", gymOnly: true },
+        { id: "co-l-slbridge", name: "SL Glute Bridge (R)", dose: "2×10 · 3s hold", note: "On back, 1 foot down, other knee to chest. Press heel, lift hips, hold 3s. No hip rotation. L side: 1 set." },
+      ],
+      legs: [
+        { id: "co-g-birddog", name: "Bird Dog", dose: "2×8/side", note: "Hands & knees. Extend opposite arm + leg to torso level. Hold 2s. No hip rotation, no back sag." },
+        { id: "co-g-clamshell", name: "Banded Clamshell (R)", dose: "2×15 · 2s hold", note: "Side-lying, band above knees, hips 60°. Open top knee, hold 2s. Feet together, don't roll back. L side: 1 set." },
+        { id: "co-g-hipabd", name: "Side-Lying Hip Abd. (R)", dose: "2×15", badge: "Phase out wk 12", note: "Top leg slightly behind, foot turned in (“pour water”). Lift to ceiling, slow lower. No hip hike." },
+        { id: "co-g-sideplank", name: "Side Plank (R down)", dose: "2×30s", note: "Forearm down, elbow under shoulder. Knees or straight leg. Stack hips, don't sag. L side: 1 set." },
+      ],
+    },
   },
   days: {
     push: [
@@ -550,8 +579,8 @@ export default function App() {
       if (!c || !c.days || !c.calisthenics) {
         c = SEED_CONFIG;
         persist("config", SEED_CONFIG, "starting config");
-      } else if (!c.mobility) {
-        // Older stored configs predate the warm-up section — merge the seed in.
+      } else if (!c.mobility || c.mobility.v !== SEED_CONFIG.mobility.v) {
+        // Older stored configs predate this warm-up/core routine — replace with the seed.
         c = { ...c, mobility: SEED_CONFIG.mobility };
         persist("config", c, "warm-ups");
       }
@@ -983,7 +1012,22 @@ function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility }) {
   const [armedDiscard, setArmedDiscard] = useArmed();
   const [finishing, setFinishing] = useState(false);
   const [showMobility, setShowMobility] = useState(false);
+  const [showCore, setShowCore] = useState(false);
   const totalSets = countSets(draft.exercises);
+  const dayName = DAY_LABEL[draft.dayType] || draft.dayType;
+  const filterMode = (items) => (items || []).filter((it) => !(draft.mode === "calisthenics" && it.gymOnly));
+  const warmSections = mobility
+    ? [
+        {
+          title: "Daily reset",
+          sub: "~12 min · floor · no equipment",
+          foot: "Daily for 2 weeks before evaluating. Markers: butterfly knee symmetry + right figure-4 range vs left.",
+          items: filterMode(mobility.general),
+        },
+        { title: `${dayName}-day warm-up`, items: filterMode(mobility[draft.dayType]) },
+      ]
+    : null;
+  const coreItems = mobility && mobility.core ? filterMode(mobility.core[draft.dayType]) : [];
 
   const doFinish = async () => {
     if (finishing) return;
@@ -1020,7 +1064,7 @@ function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility }) {
           <Flame size={18} className="shrink-0 text-lime-400" />
           <div className="min-w-0 flex-1">
             <div className="text-sm font-semibold text-zinc-100">Warm-up & mobility</div>
-            <div className="text-xs text-zinc-500">Daily routine + {DAY_LABEL[draft.dayType]}-day prep</div>
+            <div className="text-xs text-zinc-500">Daily reset + {dayName}-day warm-up</div>
           </div>
           <ChevronRight size={16} className="shrink-0 text-zinc-600" />
         </button>
@@ -1030,8 +1074,37 @@ function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility }) {
         <ExerciseCard key={ex.exerciseId} ex={ex} idx={i} count={draft.exercises.length} mode={draft.mode} mutateDraft={mutateDraft} />
       ))}
 
-      {showMobility && (
-        <MobilityScreen dayType={draft.dayType} mode={draft.mode} mobility={mobility} onClose={() => setShowMobility(false)} />
+      {coreItems.length > 0 && (
+        <button
+          onClick={() => setShowCore(true)}
+          className={`flex items-center gap-3 rounded-2xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-left active:border-zinc-600 ${TRANS}`}
+        >
+          <Shield size={18} className="shrink-0 text-lime-400" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-zinc-100">Core — after lifts</div>
+            <div className="text-xs text-zinc-500">{coreItems.map((it) => it.name.replace(/\s*\(.*\)$/, "")).join(" · ")}</div>
+          </div>
+          <ChevronRight size={16} className="shrink-0 text-zinc-600" />
+        </button>
+      )}
+
+      {showMobility && warmSections && (
+        <MobilityScreen
+          title="Warm-up & mobility"
+          subtitle={`${dayName} day · check them off as you go`}
+          sections={warmSections}
+          doneLabel="Done — start lifting"
+          onClose={() => setShowMobility(false)}
+        />
+      )}
+      {showCore && (
+        <MobilityScreen
+          title="Core — after lifts"
+          subtitle={`${dayName} day · anti-rotation & QL work`}
+          sections={[{ title: `${dayName}-day core`, items: coreItems }]}
+          doneLabel="Done — finish up"
+          onClose={() => setShowCore(false)}
+        />
       )}
 
       <button
@@ -1053,7 +1126,7 @@ function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility }) {
   );
 }
 
-function MobilityScreen({ dayType, mode, mobility, onClose }) {
+function MobilityScreen({ title, subtitle, sections, doneLabel, onClose }) {
   const [done, setDone] = useState(() => new Set());
   const toggle = (id) => {
     setDone((prev) => {
@@ -1062,11 +1135,6 @@ function MobilityScreen({ dayType, mode, mobility, onClose }) {
       return next;
     });
   };
-  const dayItems = (mobility[dayType] || []).filter((it) => !(mode === "calisthenics" && it.gymOnly));
-  const sections = [
-    { title: "Every day", items: mobility.general || [] },
-    { title: `${DAY_LABEL[dayType] || dayType}-day prep`, items: dayItems },
-  ];
   return (
     <div className="fixed inset-0 z-40 overflow-y-auto bg-black" style={{ paddingTop: "env(safe-area-inset-top)" }}>
       <div className="mx-auto max-w-md px-4 pb-16 pt-4">
@@ -1076,8 +1144,8 @@ function MobilityScreen({ dayType, mode, mobility, onClose }) {
               <ChevronLeft size={22} />
             </button>
             <div>
-              <div className="text-base font-bold">Warm-up & mobility</div>
-              <div className="text-xs text-zinc-500">{DAY_LABEL[dayType] || dayType} day · ~5 min · check them off as you go</div>
+              <div className="text-base font-bold">{title}</div>
+              <div className="text-xs text-zinc-500">{subtitle}</div>
             </div>
           </div>
         </header>
@@ -1085,7 +1153,10 @@ function MobilityScreen({ dayType, mode, mobility, onClose }) {
         <div className="flex flex-col gap-4 pt-4">
           {sections.map((sec) => (
             <section key={sec.title}>
-              <div className="px-1 pb-2 text-xs font-semibold uppercase tracking-widest text-zinc-500">{sec.title}</div>
+              <div className="flex items-baseline gap-2 px-1 pb-2">
+                <div className="text-xs font-semibold uppercase tracking-widest text-zinc-500">{sec.title}</div>
+                {sec.sub ? <div className="text-xs text-zinc-600">{sec.sub}</div> : null}
+              </div>
               <div className="flex flex-col divide-y divide-zinc-800 rounded-2xl border border-zinc-800 bg-zinc-900">
                 {sec.items.length === 0 && (
                   <div className="px-4 py-4 text-sm text-zinc-600">Nothing here yet.</div>
@@ -1102,18 +1173,26 @@ function MobilityScreen({ dayType, mode, mobility, onClose }) {
                         {checked ? <Check size={14} /> : null}
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className={`block text-sm font-semibold ${checked ? "text-zinc-500 line-through" : "text-zinc-100"}`}>{it.name}</span>
-                        {it.note ? <span className="block text-xs text-zinc-500">{it.note}</span> : null}
+                        <span className={`block text-sm font-semibold ${checked ? "text-zinc-500 line-through" : "text-zinc-100"}`}>
+                          {it.name}
+                          {it.badge ? (
+                            <span className="ml-2 inline-block rounded-full border border-amber-400/60 px-2 text-xs font-bold uppercase tracking-wide text-amber-300">
+                              {it.badge}
+                            </span>
+                          ) : null}
+                        </span>
+                        {it.note ? <span className="mt-1 block text-xs leading-relaxed text-zinc-500">{it.note}</span> : null}
                       </span>
-                      <span className="shrink-0 text-sm font-semibold tabular-nums text-zinc-400">{it.dose}</span>
+                      <span className="shrink-0 pl-1 text-right text-xs font-semibold tabular-nums text-zinc-400">{it.dose}</span>
                     </button>
                   );
                 })}
               </div>
+              {sec.foot ? <div className="px-1 pt-2 text-xs text-zinc-600">{sec.foot}</div> : null}
             </section>
           ))}
           <button onClick={onClose} className={`h-12 rounded-2xl bg-lime-400 text-sm font-bold text-black active:bg-lime-300 ${TRANS}`}>
-            Done — start lifting
+            {doneLabel}
           </button>
         </div>
       </div>
