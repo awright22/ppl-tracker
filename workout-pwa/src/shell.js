@@ -363,6 +363,8 @@ export async function startShell(mountApp) {
   try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
 
   stripEl = el("div", "", "");
+  // If iOS lets content bleed under the status bar, the strip absorbs that zone.
+  stripEl.style.paddingTop = "env(safe-area-inset-top)";
   const root = document.getElementById("root");
   root.parentNode.insertBefore(stripEl, root);
   buildPanel();

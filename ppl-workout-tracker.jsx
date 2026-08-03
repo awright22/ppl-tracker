@@ -727,14 +727,14 @@ export default function App() {
   /* --- render --- */
   if (phase === "loading" || !config) {
     return (
-      <div className="min-h-screen bg-black text-zinc-100" style={{ paddingTop: "env(safe-area-inset-top)" }}>
+      <div className="min-h-screen bg-black text-zinc-100">
         <div className="mx-auto max-w-md px-4 pt-24"><Spinner label="Loading your training data…" /></div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-black text-zinc-100" style={{ paddingTop: "env(safe-area-inset-top)" }}>
+    <div className="min-h-screen bg-black text-zinc-100">
       <div className="mx-auto max-w-md px-4 pb-32 pt-4">
         {tab === "workout" && (
           draft ? (
