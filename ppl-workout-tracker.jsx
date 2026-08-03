@@ -134,46 +134,46 @@ export const SEED_CONFIG = {
   },
   days: {
     push: [
-      { id: "bench-db", name: "DB Bench Press", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 70 },
-      { id: "ohp-db", name: "Seated DB Shoulder Press", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 45 },
-      { id: "incline-db", name: "DB Incline Bench Press", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 45 },
-      { id: "lat-raise", name: "Lateral Raises", sets: 3, repMin: 12, repMax: 15, increment: 2.5, unit: "lb", loadType: "db-pair", current: 17.5 },
-      { id: "pushdown-rope", name: "Rope Pushdown", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "stack", current: 120 },
+      { id: "bench-db", name: "DB Bench Press", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 70, restSec: 120 },
+      { id: "ohp-db", name: "Seated DB Shoulder Press", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 45, restSec: 120 },
+      { id: "incline-db", name: "DB Incline Bench Press", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 45, restSec: 120 },
+      { id: "lat-raise", name: "Lateral Raises", sets: 3, repMin: 12, repMax: 15, increment: 2.5, unit: "lb", loadType: "db-pair", current: 17.5, restSec: 90 },
+      { id: "pushdown-rope", name: "Rope Pushdown", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "stack", current: 120, restSec: 90 },
     ],
     pull: [
-      { id: "row-csdb", name: "Chest-Supported Single-Arm DB Row", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "db-single", current: 70, unilateral: true },
-      { id: "pulldown", name: "Lat Pulldown", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "stack", current: 120 },
-      { id: "shrug-db", name: "Seated DB Shrugs", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 75 },
-      { id: "facepull", name: "Face Pulls", sets: 3, repMin: 15, repMax: 20, increment: 5, unit: "lb", loadType: "stack", current: 115 },
-      { id: "curl-db", name: "Seated DB Bicep Curl", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 35 },
+      { id: "row-csdb", name: "Chest-Supported Single-Arm DB Row", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "db-single", current: 70, unilateral: true, restSec: 120 },
+      { id: "pulldown", name: "Lat Pulldown", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "stack", current: 120, restSec: 120 },
+      { id: "shrug-db", name: "Seated DB Shrugs", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 75, restSec: 90 },
+      { id: "facepull", name: "Face Pulls", sets: 3, repMin: 15, repMax: 20, increment: 5, unit: "lb", loadType: "stack", current: 115, restSec: 90 },
+      { id: "curl-db", name: "Seated DB Bicep Curl", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 35, restSec: 90 },
     ],
     legs: [
-      { id: "backext-45", name: "45° Back Extension", sets: 3, repMin: 12, repMax: 12, increment: 5, unit: "lb", loadType: "bodyweight-plus", current: 50 },
-      { id: "slpress", name: "Single-Leg Leg Press", sets: 3, repMin: 10, repMax: 12, increment: 10, unit: "lb", loadType: "plate-loaded", current: 140, unilateral: true },
-      { id: "legpress", name: "Leg Press (bilateral)", sets: 3, repMin: 10, repMax: 12, increment: 10, unit: "lb", loadType: "plate-loaded", current: 385 },
-      { id: "slcurl", name: "Single-Leg Curl", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "machine", current: 60, unilateral: true },
-      { id: "calf-seated", name: "Seated Calf Raise", sets: 3, repMin: 12, repMax: 15, increment: 10, unit: "lb", loadType: "machine", current: 120 },
+      { id: "backext-45", name: "45° Back Extension", sets: 3, repMin: 12, repMax: 12, increment: 5, unit: "lb", loadType: "bodyweight-plus", current: 50, restSec: 90 },
+      { id: "slpress", name: "Single-Leg Leg Press", sets: 3, repMin: 10, repMax: 12, increment: 10, unit: "lb", loadType: "plate-loaded", current: 140, unilateral: true, restSec: 120 },
+      { id: "legpress", name: "Leg Press (bilateral)", sets: 3, repMin: 10, repMax: 12, increment: 10, unit: "lb", loadType: "plate-loaded", current: 385, restSec: 120 },
+      { id: "slcurl", name: "Single-Leg Curl", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "machine", current: 60, unilateral: true, restSec: 90 },
+      { id: "calf-seated", name: "Seated Calf Raise", sets: 3, repMin: 12, repMax: 15, increment: 10, unit: "lb", loadType: "machine", current: 120, restSec: 90 },
     ],
   },
   calisthenics: {
     push: [
-      { id: "cal-pushup", name: "Push-Ups", sets: 3, amrap: true, note: "Progress: feet-elevated → decline as reps climb" },
-      { id: "cal-pike", name: "Pike Push-Ups", sets: 3, repMin: 8, repMax: 12, note: "Shoulder-press stand-in" },
-      { id: "cal-diamond", name: "Diamond Push-Ups", sets: 3, repMin: 10, repMax: 12, note: "Triceps focus" },
-      { id: "cal-yraise", name: "Prone Y-Raises", sets: 3, repMin: 15, repMax: 15, note: "Lateral/rear-delt stand-in — limited overload, keep it slow and strict" },
+      { id: "cal-pushup", name: "Push-Ups", sets: 3, amrap: true, note: "Progress: feet-elevated → decline as reps climb", restSec: 120 },
+      { id: "cal-pike", name: "Pike Push-Ups", sets: 3, repMin: 8, repMax: 12, note: "Shoulder-press stand-in", restSec: 90 },
+      { id: "cal-diamond", name: "Diamond Push-Ups", sets: 3, repMin: 10, repMax: 12, note: "Triceps focus", restSec: 90 },
+      { id: "cal-yraise", name: "Prone Y-Raises", sets: 3, repMin: 15, repMax: 15, note: "Lateral/rear-delt stand-in — limited overload, keep it slow and strict", restSec: 90 },
     ],
     pull: [
-      { id: "cal-pullup", name: "Pull-Ups", sets: 3, amrap: true, needsBar: true, fallback: "No bar: table inverted rows" },
-      { id: "cal-scap", name: "Scapular Pulls", sets: 3, repMin: 8, repMax: 8, needsBar: true, fallback: "No bar: towel rows (slow)" },
-      { id: "cal-chinup", name: "Chin-Ups", sets: 3, amrap: true, needsBar: true, note: "Biceps emphasis", fallback: "No bar: towel curls / backpack curls" },
-      { id: "cal-tw", name: "Prone T-W Raises", sets: 3, repMin: 15, repMax: 15, note: "Face-pull stand-in" },
+      { id: "cal-pullup", name: "Pull-Ups", sets: 3, amrap: true, needsBar: true, fallback: "No bar: table inverted rows", restSec: 120 },
+      { id: "cal-scap", name: "Scapular Pulls", sets: 3, repMin: 8, repMax: 8, needsBar: true, fallback: "No bar: towel rows (slow)", restSec: 90 },
+      { id: "cal-chinup", name: "Chin-Ups", sets: 3, amrap: true, needsBar: true, note: "Biceps emphasis", fallback: "No bar: towel curls / backpack curls", restSec: 120 },
+      { id: "cal-tw", name: "Prone T-W Raises", sets: 3, repMin: 15, repMax: 15, note: "Face-pull stand-in", restSec: 90 },
     ],
     legs: [
-      { id: "cal-split", name: "Supported Split Squats", sets: 3, repMin: 10, repMax: 12, unilateral: true, note: "Hold a doorframe/chair. Knee-friendly depth — stop if right QL flares." },
-      { id: "cal-bridge", name: "Single-Leg Glute Bridge", sets: 3, repMin: 12, repMax: 12, unilateral: true, note: "3-second hold at the top" },
-      { id: "cal-slide", name: "Sliding / Heel-Walk Leg Curls", sets: 3, repMin: 8, repMax: 10, note: "Socks on smooth floor, or slow heel-walks from bridge" },
-      { id: "cal-calf", name: "Single-Leg Calf Raises", sets: 3, repMin: 15, repMax: 15, unilateral: true, note: "Full stretch at the bottom, pause at the top" },
-      { id: "cal-wallsit", name: "Wall Sit", sets: 2, repMin: 45, repMax: 45, timed: true },
+      { id: "cal-split", name: "Supported Split Squats", sets: 3, repMin: 10, repMax: 12, unilateral: true, note: "Hold a doorframe/chair. Knee-friendly depth — stop if right QL flares.", restSec: 120 },
+      { id: "cal-bridge", name: "Single-Leg Glute Bridge", sets: 3, repMin: 12, repMax: 12, unilateral: true, note: "3-second hold at the top", restSec: 90 },
+      { id: "cal-slide", name: "Sliding / Heel-Walk Leg Curls", sets: 3, repMin: 8, repMax: 10, note: "Socks on smooth floor, or slow heel-walks from bridge", restSec: 90 },
+      { id: "cal-calf", name: "Single-Leg Calf Raises", sets: 3, repMin: 15, repMax: 15, unilateral: true, note: "Full stretch at the bottom, pause at the top", restSec: 90 },
+      { id: "cal-wallsit", name: "Wall Sit", sets: 2, repMin: 45, repMax: 45, timed: true, restSec: 90 },
     ],
   },
 };
@@ -216,6 +216,34 @@ function daysAgo(iso) {
 }
 const byDateDesc = (a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
 const byDateAsc = (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+
+/* ---------- e1RM + plate math (exported for tests) ---------- */
+
+// Epley estimate; most reliable in the 2-10 rep range.
+export const epleyE1rm = (w, r) => (Number(w) > 0 && Number(r) > 0 ? Math.round(Number(w) * (1 + Number(r) / 30)) : 0);
+
+// Per-side plate breakdown for a total loaded weight (standard lb plates).
+export function plateBreakdown(total) {
+  const side = (Number(total) || 0) / 2;
+  if (side <= 0) return "";
+  const plates = [45, 35, 25, 10, 5, 2.5];
+  let rem = side;
+  const parts = [];
+  for (const p of plates) {
+    const n = Math.floor((rem + 0.001) / p);
+    if (n > 0) {
+      parts.push(n > 1 ? `${n}×${fmtW(p)}` : fmtW(p));
+      rem = round2(rem - n * p);
+    }
+  }
+  if (rem > 0.09) parts.push(`+${fmtW(rem)}`);
+  return parts.join(" + ");
+}
+
+function fmtClock(totalSec) {
+  const s = Math.max(0, Math.round(totalSec));
+  return `${Math.floor(s / 60)}:${pad2(s % 60)}`;
+}
 
 /* ---------- progression logic (exported for tests) ---------- */
 
@@ -519,6 +547,7 @@ export default function App() {
   const [viewer, setViewer] = useState(null); // { id } — full-screen session viewer
   const [starting, setStarting] = useState(false);
   const [justFinished, setJustFinished] = useState(null); // last saved session, for the Health card
+  const recordsRef = useRef({}); // { exerciseId: { weight, e1rm, date } } — all-time bests for PR flags
 
   const draftRef = useRef(null);
   const sessionCache = useRef(new Map());
@@ -577,12 +606,14 @@ export default function App() {
   useEffect(() => {
     let alive = true;
     (async () => {
-      const [cfg, idx, dr] = await Promise.all([
+      const [cfg, idx, dr, recs] = await Promise.all([
         store.get("config"),
         store.get("sessions-index"),
         store.get("draft"),
+        store.get("records"),
       ]);
       if (!alive) return;
+      recordsRef.current = recs && typeof recs === "object" ? recs : {};
       let c = cfg;
       if (!c || !c.days || !c.calisthenics) {
         c = SEED_CONFIG;
@@ -591,6 +622,25 @@ export default function App() {
         // Older stored configs predate this warm-up/core routine — replace with the seed.
         c = { ...c, mobility: SEED_CONFIG.mobility };
         persist("config", c, "warm-ups");
+      }
+      // Fill missing per-exercise rest durations (seed value by id, else 120 gym / 90 bodyweight).
+      {
+        let restChanged = false;
+        const fillRest = (list, seedList, dflt) =>
+          (list || []).map((ex) => {
+            if (ex.restSec) return ex;
+            restChanged = true;
+            const seeded = (seedList || []).find((s) => s.id === ex.id);
+            return { ...ex, restSec: (seeded && seeded.restSec) || dflt };
+          });
+        const days = {};
+        DAY_KEYS.forEach((k) => { days[k] = fillRest(c.days[k], SEED_CONFIG.days[k], 120); });
+        const cal = {};
+        DAY_KEYS.forEach((k) => { cal[k] = fillRest(c.calisthenics[k], SEED_CONFIG.calisthenics[k], 90); });
+        if (restChanged) {
+          c = { ...c, days, calisthenics: cal };
+          persist("config", c, "rest timers");
+        }
       }
       const list = Array.isArray(idx) ? [...idx].sort(byDateDesc) : [];
       setConfig(c);
@@ -662,6 +712,7 @@ export default function App() {
           unilateral: !!ex.unilateral, timed: !!ex.timed, amrap: !!ex.amrap, needsBar: !!ex.needsBar,
           loadType: ex.loadType || null, repMin: ex.repMin ?? null, repMax: ex.repMax ?? null,
           increment: ex.increment || 0, targetSets: ex.sets || 3, current: ex.current ?? null,
+          restSec: ex.restSec || (mode === "gym" ? 120 : 90),
           exNote: ex.note || "", fallback: ex.fallback || "",
           lastPerf, suggestion, acceptedTarget: null,
           sets: [], note: "", skipped: false, pending,
@@ -700,6 +751,35 @@ export default function App() {
       pushToast("No sets logged yet — log a set or discard", { tone: "error" });
       return;
     }
+    // PR detection against all-time records (gym only). First-ever entries seed silently.
+    const prNames = [];
+    if (d.mode === "gym") {
+      const recs = { ...recordsRef.current };
+      let recsChanged = false;
+      for (const ex of kept) {
+        let topW = 0, bestE1 = 0;
+        for (const s of ex.sets) {
+          const w = Number(s.weight) || 0;
+          if (w > topW) topW = w;
+          const e1 = epleyE1rm(w, setEffectiveReps(s, !!ex.unilateral));
+          if (e1 > bestE1) bestE1 = e1;
+        }
+        if (topW <= 0) continue;
+        const rec = recs[ex.exerciseId];
+        if (rec && (topW > rec.weight + 0.01 || bestE1 > rec.e1rm + 0.01)) {
+          ex.pr = true;
+          prNames.push(ex.name);
+        }
+        if (!rec || topW > rec.weight || bestE1 > rec.e1rm) {
+          recs[ex.exerciseId] = { weight: Math.max(topW, rec ? rec.weight : 0), e1rm: Math.max(bestE1, rec ? rec.e1rm : 0), date: d.date };
+          recsChanged = true;
+        }
+      }
+      if (recsChanged) {
+        recordsRef.current = recs;
+        persist("records", recs, "records");
+      }
+    }
     const isLegsGym = d.mode === "gym" && d.dayType === "legs";
     const session = {
       id: d.id, date: d.date, endDate: new Date().toISOString(),
@@ -719,6 +799,7 @@ export default function App() {
       id: d.id, date: d.date, dayType: d.dayType, mode: d.mode,
       headline: headlineFor(kept), setCount: countSets(kept),
       ql: isLegsGym ? null : undefined,
+      pr: prNames.length > 0 || undefined,
     };
     setIndex((prev) => {
       const next = [entry, ...prev.filter((e) => e.id !== d.id)].sort(byDateDesc);
@@ -750,6 +831,9 @@ export default function App() {
     store.remove("draft");
     setJustFinished(session);
     pushToast(`${DAY_LABEL[d.dayType]} day saved — ${entry.setCount} sets`, { tone: "success" });
+    if (prNames.length > 0) {
+      pushToast(`🎉 PR: ${prNames.slice(0, 2).join(", ")}${prNames.length > 2 ? ` +${prNames.length - 2}` : ""}`, { tone: "success", ttl: 6500 });
+    }
   }, [persist, pushToast, setDraft]);
 
   /* --- save edited session (from viewer) --- */
@@ -777,6 +861,8 @@ export default function App() {
   }, [persist, pushToast]);
 
   const deleteSession = useCallback(async (id) => {
+    const entry = index.find((e) => e.id === id) || null;
+    const session = sessionCache.current.get(id) || (await store.get(`session:${id}`));
     store.remove(`session:${id}`);
     sessionCache.current.delete(id);
     setIndex((prev) => {
@@ -785,8 +871,23 @@ export default function App() {
       return next;
     });
     setViewer(null);
-    pushToast("Session deleted");
-  }, [persist, pushToast]);
+    pushToast("Session deleted", {
+      ttl: 7000,
+      action: !session || !entry ? undefined : {
+        label: "Undo",
+        fn: () => {
+          sessionCache.current.set(id, session);
+          persist(`session:${id}`, session, "workout");
+          setIndex((prev) => {
+            const next = [entry, ...prev.filter((e) => e.id !== id)].sort(byDateDesc);
+            persist("sessions-index", next, "history");
+            return next;
+          });
+          pushToast("Session restored", { tone: "success" });
+        },
+      },
+    });
+  }, [index, persist, pushToast]);
 
   const saveConfig = useCallback((next) => {
     setConfig(next);
@@ -813,6 +914,7 @@ export default function App() {
               onFinish={finishWorkout}
               onDiscard={discardDraft}
               mobility={config.mobility}
+              pushToast={pushToast}
             />
           ) : (
             <HomeScreen
@@ -1016,11 +1118,39 @@ function HomeScreen({ index, mode, setMode, onStart, starting, qlPrompt, answerQ
 
 /* ---------- logging ---------- */
 
-function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility }) {
+function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility, pushToast }) {
   const [armedDiscard, setArmedDiscard] = useArmed();
   const [finishing, setFinishing] = useState(false);
   const [showMobility, setShowMobility] = useState(false);
   const [showCore, setShowCore] = useState(false);
+  const [rest, setRest] = useState(null); // { until, total, label }
+  const [, tick] = useState(0);
+  const audioRef = useRef(null);
+  const chimedRef = useRef(false);
+
+  useEffect(() => {
+    if (!rest) return undefined;
+    const t = setInterval(() => tick((n) => n + 1), 500);
+    return () => clearInterval(t);
+  }, [rest]);
+  const restLeft = rest ? Math.ceil((rest.until - Date.now()) / 1000) : 0;
+  useEffect(() => {
+    if (!rest) { chimedRef.current = false; return undefined; }
+    if (restLeft <= 0 && !chimedRef.current) {
+      chimedRef.current = true;
+      playChime(audioRef.current);
+      const t = setTimeout(() => setRest(null), 6000);
+      return () => clearTimeout(t);
+    }
+    return undefined;
+  }, [rest, restLeft]);
+
+  const onSetLogged = (ex) => {
+    ensureAudio(audioRef);
+    chimedRef.current = false;
+    setRest({ until: Date.now() + (ex.restSec || 90) * 1000, total: ex.restSec || 90, label: ex.name });
+  };
+  const adjustRest = (d) => setRest((r) => (r ? { ...r, until: Math.max(Date.now(), r.until + d * 1000) } : r));
   const totalSets = countSets(draft.exercises);
   const dayName = DAY_LABEL[draft.dayType] || draft.dayType;
   const filterMode = (items) => (items || []).filter((it) => !(draft.mode === "calisthenics" && it.gymOnly));
@@ -1084,7 +1214,7 @@ function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility }) {
       )}
 
       {draft.exercises.map((ex, i) => (
-        <ExerciseCard key={ex.exerciseId} ex={ex} idx={i} count={draft.exercises.length} mode={draft.mode} mutateDraft={mutateDraft} />
+        <ExerciseCard key={ex.exerciseId} ex={ex} idx={i} count={draft.exercises.length} mode={draft.mode} mutateDraft={mutateDraft} onSetLogged={onSetLogged} pushToast={pushToast} />
       ))}
 
       {coreItems.length > 0 && (
@@ -1135,6 +1265,36 @@ function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility }) {
       >
         {armedDiscard ? "Tap again to discard workout" : "Discard workout"}
       </button>
+      {rest && <div className="h-16" />}
+
+      {rest && (
+        <div className="fixed inset-x-0 z-30" style={{ bottom: "calc(4rem + env(safe-area-inset-bottom))" }}>
+          <div className="mx-auto max-w-md px-4 pb-2">
+            <div className={`flex items-center gap-2 rounded-2xl border px-3 py-2 shadow-lg ${TRANS} ${
+              restLeft <= 0 ? "border-lime-400 bg-lime-400" : "border-zinc-700 bg-zinc-900"
+            }`}>
+              {restLeft <= 0 ? (
+                <div className="flex-1 pl-1 text-base font-bold text-black">Rest done — go</div>
+              ) : (
+                <>
+                  <div className="min-w-0 flex-1 pl-1">
+                    <div className="truncate text-xs text-zinc-500">Rest · {rest.label}</div>
+                    <div className="text-2xl font-bold leading-none tabular-nums text-zinc-50">{fmtClock(restLeft)}</div>
+                  </div>
+                  <button onClick={() => adjustRest(-15)} className="h-11 w-11 shrink-0 rounded-xl bg-zinc-800 text-xs font-bold text-zinc-200 active:bg-zinc-700">−15</button>
+                  <button onClick={() => adjustRest(15)} className="h-11 w-11 shrink-0 rounded-xl bg-zinc-800 text-xs font-bold text-zinc-200 active:bg-zinc-700">+15</button>
+                </>
+              )}
+              <button
+                onClick={() => setRest(null)}
+                className={`h-11 shrink-0 rounded-xl px-3 text-xs font-bold ${restLeft <= 0 ? "bg-zinc-900 text-lime-300" : "bg-zinc-800 text-zinc-200 active:bg-zinc-700"}`}
+              >
+                {restLeft <= 0 ? "Dismiss" : "Skip"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1213,12 +1373,43 @@ function MobilityScreen({ title, subtitle, sections, doneLabel, onClose }) {
   );
 }
 
+/* ---------- rest-timer audio (iOS PWAs have no vibration API — sound + visuals carry feedback) ---------- */
+
+function ensureAudio(ref) {
+  try {
+    if (!ref.current) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) ref.current = new AC(); // created inside a tap gesture so iOS lets it play later
+    }
+    if (ref.current && ref.current.state === "suspended") ref.current.resume();
+  } catch (e) { /* no audio available */ }
+}
+
+function playChime(ctx) {
+  if (!ctx) return;
+  try {
+    [0, 0.22].forEach((t0) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.connect(g);
+      g.connect(ctx.destination);
+      o.frequency.value = 880;
+      const t = ctx.currentTime + t0;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.25, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+      o.start(t);
+      o.stop(t + 0.2);
+    });
+  } catch (e) { /* ignore */ }
+}
+
 function patchExercise(draft, idx, patch) {
   const exercises = draft.exercises.map((e, i) => (i === idx ? { ...e, ...patch } : e));
   return { ...draft, exercises };
 }
 
-function ExerciseCard({ ex, idx, count, mode, mutateDraft }) {
+function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, pushToast }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(!!ex.note);
 
@@ -1238,13 +1429,28 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft }) {
       else set.reps = Number(p.reps) || 0;
       return patchExercise(d, idx, { sets: [...cur.sets, set] });
     }, "now"); // checkpoint the draft on every logged set
+    if (onSetLogged) onSetLogged(ex);
   };
 
   const removeSet = (si) => {
+    const removed = ex.sets[si];
     mutateDraft((d) => {
       const cur = d.exercises[idx];
       return patchExercise(d, idx, { sets: cur.sets.filter((_, j) => j !== si) });
     }, "now");
+    if (pushToast && removed) {
+      pushToast("Set removed", {
+        action: {
+          label: "Undo",
+          fn: () => mutateDraft((d) => {
+            const cur = d.exercises[idx];
+            const sets = [...cur.sets];
+            sets.splice(Math.min(si, sets.length), 0, removed);
+            return patchExercise(d, idx, { sets });
+          }, "now"),
+        },
+      });
+    }
   };
 
   const move = (dir) => {
@@ -1389,6 +1595,11 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft }) {
             <Stepper value={ex.pending.weight} onChange={(v) => setPending({ weight: v })} step={ex.increment || 5} min={0} />
           </div>
         )}
+        {mode === "gym" && ex.loadType === "plate-loaded" && Number(ex.pending.weight) > 0 && (
+          <div className="-mt-1 text-right text-xs tabular-nums text-zinc-500">
+            per side: {plateBreakdown(ex.pending.weight) || "—"}
+          </div>
+        )}
         {ex.unilateral ? (
           <div className="grid grid-cols-2 gap-2">
             <div className="flex flex-col items-center gap-1 rounded-xl bg-zinc-950 p-2">
@@ -1460,6 +1671,7 @@ function HistoryScreen({ index, onOpen }) {
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-bold uppercase tracking-wide text-zinc-200">{DAY_LABEL[e.dayType] || e.dayType}</span>
                   {e.mode === "calisthenics" && <span className="rounded bg-zinc-800 px-1 py-1 text-xs font-semibold text-zinc-400">BW</span>}
+                  {e.pr && <span className="rounded bg-lime-400 px-1 text-xs font-bold text-black">PR</span>}
                   {e.ql === "same-or-better" && <span title="QL same or better" className="h-2 w-2 rounded-full bg-green-500" />}
                   {e.ql === "worse" && <span title="QL worse" className="h-2 w-2 rounded-full bg-red-500" />}
                 </div>
@@ -1602,7 +1814,10 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, pus
               const inc = (cfg && cfg.increment) || 5;
               return (
                 <section key={ex.exerciseId + ei} className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
-                  <h2 className="font-semibold text-zinc-100">{ex.name}</h2>
+                  <h2 className="font-semibold text-zinc-100">
+                    {ex.name}
+                    {ex.pr ? <span className="ml-2 rounded bg-lime-400 px-1 text-xs font-bold text-black">PR</span> : null}
+                  </h2>
                   {!editing ? (
                     <>
                       <div className="mt-2 flex flex-col divide-y divide-zinc-800 rounded-xl bg-zinc-950">
@@ -1707,6 +1922,7 @@ function ProgressScreen({ config, index, loadSession, onOpen }) {
   };
   const [exId, setExId] = useState(firstWithData);
   const [points, setPoints] = useState(null); // null = loading
+  const [metric, setMetric] = useState("e1rm"); // second chart: "e1rm" | "volume"
   const exCfg = findConfigEx(config, exId);
 
   useEffect(() => {
@@ -1722,7 +1938,8 @@ function ProgressScreen({ config, index, loadSession, onOpen }) {
         if (!ex) continue;
         const weight = Math.max(...ex.sets.map((st) => Number(st.weight) || 0));
         const volume = Math.max(...ex.sets.map((st) => setVolume(st, ex.unilateral)));
-        pts.push({ id: s.id, label: shortDate(s.date), weight, volume });
+        const e1rm = Math.max(...ex.sets.map((st) => epleyE1rm(Number(st.weight) || 0, setEffectiveReps(st, !!ex.unilateral))));
+        pts.push({ id: s.id, label: shortDate(s.date), weight, volume, e1rm });
       }
       if (alive) setPoints(pts);
     })();
@@ -1784,12 +2001,25 @@ function ProgressScreen({ config, index, loadSession, onOpen }) {
             onClick={openFromChart}
           />
           <ChartCard
-            title="Best-set volume (weight × reps)"
+            title={metric === "e1rm" ? "Est. 1RM (Epley)" : "Best-set volume (weight × reps)"}
             sub={exCfg && exCfg.unilateral ? "weaker side" : null}
+            headerRight={
+              <div className="flex rounded-lg bg-zinc-950 p-1">
+                {[["e1rm", "e1RM"], ["volume", "Volume"]].map(([key, label]) => (
+                  <button
+                    key={key}
+                    onClick={() => setMetric(key)}
+                    className={`h-8 rounded px-3 text-xs font-semibold ${TRANS} ${metric === key ? "bg-zinc-700 text-zinc-100" : "text-zinc-500"}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            }
             data={points}
-            dataKey="volume"
-            color={CHART.vol}
-            height={128}
+            dataKey={metric}
+            color={metric === "e1rm" ? CHART.line : CHART.vol}
+            height={144}
             onClick={openFromChart}
           />
           <div className="text-center text-xs text-zinc-600">Tap a point to open that session</div>
@@ -1809,12 +2039,15 @@ function ChartTip({ active, payload, label, unit }) {
   );
 }
 
-function ChartCard({ title, sub, data, dataKey, color, height, onClick }) {
+function ChartCard({ title, sub, headerRight, data, dataKey, color, height, onClick }) {
   return (
     <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-3">
-      <div className="flex items-baseline gap-2 px-1 pb-2">
-        <div className="text-sm font-semibold text-zinc-200">{title}</div>
-        {sub ? <div className="text-xs text-zinc-500">{sub}</div> : null}
+      <div className="flex items-center gap-2 px-1 pb-2">
+        <div className="min-w-0 flex-1">
+          <span className="text-sm font-semibold text-zinc-200">{title}</span>
+          {sub ? <span className="ml-2 text-xs text-zinc-500">{sub}</span> : null}
+        </div>
+        {headerRight || null}
       </div>
       <ResponsiveContainer width="100%" height={height}>
         <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }} onClick={onClick}>
@@ -2015,6 +2248,7 @@ function ExerciseEditor({ ex, mode, onSave, onDelete, onCancel }) {
         className="h-12 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 text-base font-semibold text-zinc-100 outline-none"
       />
       <Field label="Sets"><Stepper small value={form.sets} onChange={(v) => set({ sets: Math.max(1, Math.round(v)) })} step={1} min={1} max={10} /></Field>
+      <Field label="Rest (sec)"><Stepper small value={form.restSec ?? 90} onChange={(v) => set({ restSec: Math.min(600, Math.max(15, Math.round(v))) })} step={15} min={15} max={600} /></Field>
       {!form.amrap && (
         <>
           <Field label={form.timed ? "Min seconds" : "Rep min"}><Stepper small value={form.repMin} onChange={(v) => set({ repMin: Math.max(1, Math.round(v)) })} step={form.timed ? 5 : 1} min={1} /></Field>

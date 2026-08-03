@@ -12,7 +12,7 @@ const PREFIX = "ppl.";
 const META_KEY = "ppl.__meta";     // { [key]: updatedAtMs }
 const QUEUE_KEY = "ppl.__queue";   // [key, ...] pending push
 const CFG_KEY = "ppl.__sheetCfg";  // { url, token }
-const SYNCABLE = /^(config|sessions-index|session:.+)$/;
+const SYNCABLE = /^(config|sessions-index|records|session:.+)$/;
 
 const readJson = (k, fallback) => {
   try {
