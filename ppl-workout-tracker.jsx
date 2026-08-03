@@ -70,7 +70,7 @@ const store = {
 export const SEED_CONFIG = {
   // QL-recovery program: daily reset + per-day warm-ups + per-day core (after lifts).
   mobility: {
-    v: 2,
+    v: 3,
     general: [
       { id: "dr-9090", name: "90/90 Breathing", dose: "1 min", note: "Feet on wall. Inhale 4s, exhale 8s." },
       { id: "dr-psoas", name: "Supine Psoas Stretch", dose: "R 90s · L 60s", note: "Edge of bed, opposite knee to chest, leg hangs." },
@@ -105,7 +105,14 @@ export const SEED_CONFIG = {
       { id: "wu-l-sapd", name: "Cable SA Pull-Downs", dose: "12–15", note: "Cable high, light. Arms at shoulder height. Pull to thighs in arc, arms straight. Squeeze lats 1s. Slow return.", gymOnly: true },
       { id: "wu-l-facepull", name: "Cable Face Pulls", dose: "15", note: "Cable face height, light. Rope, palms down. Pull to face, split rope. Elbows high & wide. Squeeze scaps 1s.", gymOnly: true },
     ],
-    legs: [],
+    legs: [
+      { id: "wu-g-breath", name: "90/90 Breathing", dose: "5–8 breaths", note: "Feet on wall, hips/knees 90°. Press heels in. Exhale mouth 5–8s, sigh at end. Inhale nose into lateral ribs. Pause 3–5s after exhale." },
+      { id: "wu-g-hipflexor", name: "Hip Flexor Stretch (R)", dose: "1×30s", note: "Long lunge, R foot back. Tuck tailbone + squeeze R glute first, then shift forward. R arm overhead & slightly across." },
+      { id: "wu-g-qlrelease", name: "LB QL Release (R)", dose: "~2 min", badge: "Phase out", note: "Side-lying R side, ball above iliac crest, lateral to erectors. 5/10 pressure. Hold spots 20–30s. Stay below 12th rib. Deep sick ache = kidney → reposition." },
+      { id: "wu-g-tfl", name: "Foam Roll R TFL", dose: "90s", note: "Side-lying, roller just below front of hip bone (ASIS). Small rolls over the TFL bulb. Hold tender spots 10s. Releases lateral pelvic tilt contributor." },
+      { id: "wu-g-glutefig4", name: "LB R Glute (figure-4)", dose: "~2 min", note: "Sit on floor, cross R ankle over L knee. Lacrosse ball under R glute. Find tender spot → hold pressure + bend/straighten knee 5–10× for active release." },
+      { id: "wu-g-bandwalk", name: "Lateral Band Walk", dose: "10 steps/way", note: "Mini band above ankles, quarter-squat. Lead with heel, toes forward. Control trail leg. Stay low." },
+    ],
     core: {
       push: [
         { id: "co-p-deadbug", name: "Dead Bugs", dose: "2×10/side", note: "On back, arms up, knees 90°. Press low back flat. Lower opposite arm/leg. Only go as far as back stays glued." },
