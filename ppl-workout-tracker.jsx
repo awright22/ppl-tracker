@@ -1024,17 +1024,22 @@ function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility }) {
   const totalSets = countSets(draft.exercises);
   const dayName = DAY_LABEL[draft.dayType] || draft.dayType;
   const filterMode = (items) => (items || []).filter((it) => !(draft.mode === "calisthenics" && it.gymOnly));
-  const warmSections = mobility
-    ? [
-        {
-          title: "Daily reset",
-          sub: "~12 min · floor · no equipment",
-          foot: "Daily for 2 weeks before evaluating. Markers: butterfly knee symmetry + right figure-4 range vs left.",
-          items: filterMode(mobility.general),
-        },
-        { title: `${dayName}-day warm-up`, items: filterMode(mobility[draft.dayType]) },
-      ]
-    : null;
+  let warmSections = null;
+  if (mobility) {
+    const generalItems = filterMode(mobility.general);
+    // An item listed in the daily reset wins the dupe battle with the day warm-up.
+    const generalNames = new Set(generalItems.map((it) => it.name.trim().toLowerCase()));
+    const dayItems = filterMode(mobility[draft.dayType]).filter((it) => !generalNames.has(it.name.trim().toLowerCase()));
+    warmSections = [
+      {
+        title: "Daily reset",
+        sub: "~12 min · floor · no equipment",
+        foot: "Daily for 2 weeks before evaluating. Markers: butterfly knee symmetry + right figure-4 range vs left.",
+        items: generalItems,
+      },
+      { title: `${dayName}-day warm-up`, items: dayItems },
+    ];
+  }
   const coreItems = mobility && mobility.core ? filterMode(mobility.core[draft.dayType]) : [];
 
   const doFinish = async () => {
