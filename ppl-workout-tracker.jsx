@@ -309,6 +309,7 @@ export function buildHealthPayload(session) {
       startLocal: local(start),
       endLocal: local(end),
       minutes,
+      calories: Math.round(minutes * 5), // rough strength-training estimate for the Health log
       sets,
       exercises: (session.exercises || []).length,
       summary: `${DAY_LABEL[session.dayType] || session.dayType} day — ${sets} sets · ${headlineFor(session.exercises || [])}`,
