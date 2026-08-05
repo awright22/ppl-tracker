@@ -2271,7 +2271,7 @@ function SettingsScreen({ config, saveConfig, themeKey }) {
       </div>
 
       <div className="flex flex-col gap-2">
-        <div className="px-1 text-xs font-semibold uppercase tracking-widest text-zinc-500">Workout</div>
+        <div className="px-1 text-xs font-semibold uppercase tracking-widest text-zinc-500">During workouts</div>
         <div className="flex flex-col divide-y divide-zinc-800 rounded-2xl border border-zinc-800 bg-zinc-900 px-4">
           <div className="flex h-14 items-center justify-between">
             <div className="text-sm font-semibold text-zinc-100">Keep screen awake</div>
