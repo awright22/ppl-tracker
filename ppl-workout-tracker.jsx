@@ -134,14 +134,14 @@ export const SEED_CONFIG = {
   },
   days: {
     push: [
-      { id: "bench-db", name: "DB Bench Press", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 70, restSec: 120 },
+      { id: "bench-db", name: "DB Bench Press", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 70, restSec: 120, warmupRamp: true },
       { id: "ohp-db", name: "Seated DB Shoulder Press", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 45, restSec: 120 },
       { id: "incline-db", name: "DB Incline Bench Press", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 45, restSec: 120 },
       { id: "lat-raise", name: "Lateral Raises", sets: 3, repMin: 12, repMax: 15, increment: 2.5, unit: "lb", loadType: "db-pair", current: 17.5, restSec: 90 },
       { id: "pushdown-rope", name: "Rope Pushdown", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "stack", current: 120, restSec: 90 },
     ],
     pull: [
-      { id: "row-csdb", name: "Chest-Supported Single-Arm DB Row", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "db-single", current: 70, unilateral: true, restSec: 120 },
+      { id: "row-csdb", name: "Chest-Supported Single-Arm DB Row", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "db-single", current: 70, unilateral: true, restSec: 120, warmupRamp: true },
       { id: "pulldown", name: "Lat Pulldown", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "stack", current: 120, restSec: 120 },
       { id: "shrug-db", name: "Seated DB Shrugs", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 75, restSec: 90 },
       { id: "facepull", name: "Face Pulls", sets: 3, repMin: 15, repMax: 20, increment: 5, unit: "lb", loadType: "stack", current: 115, restSec: 90 },
@@ -149,7 +149,7 @@ export const SEED_CONFIG = {
     ],
     legs: [
       { id: "backext-45", name: "45° Back Extension", sets: 3, repMin: 12, repMax: 12, increment: 5, unit: "lb", loadType: "bodyweight-plus", current: 50, restSec: 90 },
-      { id: "slpress", name: "Single-Leg Leg Press", sets: 3, repMin: 10, repMax: 12, increment: 10, unit: "lb", loadType: "plate-loaded", current: 140, unilateral: true, restSec: 120 },
+      { id: "slpress", name: "Single-Leg Leg Press", sets: 3, repMin: 10, repMax: 12, increment: 10, unit: "lb", loadType: "plate-loaded", current: 140, unilateral: true, restSec: 120, warmupRamp: true },
       { id: "legpress", name: "Leg Press (bilateral)", sets: 3, repMin: 10, repMax: 12, increment: 10, unit: "lb", loadType: "plate-loaded", current: 385, restSec: 120 },
       { id: "slcurl", name: "Single-Leg Curl", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "machine", current: 60, unilateral: true, restSec: 90 },
       { id: "calf-seated", name: "Seated Calf Raise", sets: 3, repMin: 12, repMax: 15, increment: 10, unit: "lb", loadType: "machine", current: 120, restSec: 90 },
@@ -279,6 +279,15 @@ const byDateAsc = (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
 // Epley estimate; most reliable in the 2-10 rep range.
 export const epleyE1rm = (w, r) => (Number(w) > 0 && Number(r) > 0 ? Math.round(Number(w) * (1 + Number(r) / 30)) : 0);
 
+// Warm-up ramp: light bar/DBs, then 50% and 75% of the working weight,
+// snapped to the exercise's real-world increment.
+export function rampWeights(working, increment) {
+  if (!(Number(working) > 0)) return null;
+  const inc = Number(increment) > 0 ? Number(increment) : 5;
+  const snap = (x) => Math.max(inc, Math.round(x / inc) * inc);
+  return { half: round2(snap(working * 0.5)), threeQ: round2(snap(working * 0.75)) };
+}
+
 // Per-side plate breakdown for a total loaded weight (standard lb plates).
 export function plateBreakdown(total) {
   const side = (Number(total) || 0) / 2;
@@ -339,7 +348,11 @@ function setVolume(set, unilateral) {
 }
 
 function fmtSetShort(set, ex) {
-  if (ex.unilateral) return `L${Number(set.repsL) || 0}·R${Number(set.repsR) || 0}`;
+  if (ex.unilateral) {
+    const l = Number(set.repsL) || 0;
+    const r = Number(set.repsR) || 0;
+    return l === r ? `${l}/side` : `L${l}·R${r}`;
+  }
   if (ex.timed) return `${Number(set.reps) || 0}s`;
   return String(Number(set.reps) || 0);
 }
@@ -685,10 +698,13 @@ export default function App() {
         let restChanged = false;
         const fillRest = (list, seedList, dflt) =>
           (list || []).map((ex) => {
-            if (ex.restSec) return ex;
-            restChanged = true;
             const seeded = (seedList || []).find((s) => s.id === ex.id);
-            return { ...ex, restSec: (seeded && seeded.restSec) || dflt };
+            const patch = {};
+            if (!ex.restSec) patch.restSec = (seeded && seeded.restSec) || dflt;
+            if (ex.warmupRamp === undefined && seeded && seeded.warmupRamp) patch.warmupRamp = true;
+            if (Object.keys(patch).length === 0) return ex;
+            restChanged = true;
+            return { ...ex, ...patch };
           });
         const days = {};
         DAY_KEYS.forEach((k) => { days[k] = fillRest(c.days[k], SEED_CONFIG.days[k], 120); });
@@ -770,6 +786,7 @@ export default function App() {
           loadType: ex.loadType || null, repMin: ex.repMin ?? null, repMax: ex.repMax ?? null,
           increment: ex.increment || 0, targetSets: ex.sets || 3, current: ex.current ?? null,
           restSec: ex.restSec || (mode === "gym" ? 120 : 90),
+          warmupRamp: !!ex.warmupRamp,
           exNote: ex.note || "", fallback: ex.fallback || "",
           lastPerf, suggestion, acceptedTarget: null,
           sets: [], note: "", skipped: false, pending,
@@ -1640,6 +1657,17 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, pushToas
         <div className="mt-1 text-xs text-zinc-500">Last note: “{ex.lastPerf.note}”</div>
       ) : null}
 
+      {mode === "gym" && ex.warmupRamp && ex.sets.length === 0 && rampWeights(Number(ex.pending.weight) || 0, ex.increment) ? (
+        (() => {
+          const ramp = rampWeights(Number(ex.pending.weight) || 0, ex.increment);
+          return (
+            <div className="mt-2 rounded-xl bg-zinc-950 px-3 py-2 text-xs tabular-nums text-zinc-500">
+              Warm-up: light ×10 · <span className="font-semibold text-zinc-300">{fmtW(ramp.half)}</span> ×8 · <span className="font-semibold text-zinc-300">{fmtW(ramp.threeQ)}</span> ×4 · then working sets
+            </div>
+          );
+        })()
+      ) : null}
+
       {/* logged sets */}
       {ex.sets.length > 0 && (
         <div className="mt-3 flex flex-col divide-y divide-zinc-800 rounded-xl bg-zinc-950">
@@ -1675,15 +1703,9 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, pushToas
           </div>
         )}
         {ex.unilateral ? (
-          <div className="grid grid-cols-2 gap-2">
-            <div className="flex flex-col items-center gap-1 rounded-xl bg-zinc-950 p-2">
-              <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Left</div>
-              <Stepper small value={ex.pending.repsL} onChange={(v) => setPending({ repsL: v })} step={1} min={0} />
-            </div>
-            <div className="flex flex-col items-center gap-1 rounded-xl bg-zinc-950 p-2">
-              <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Right</div>
-              <Stepper small value={ex.pending.repsR} onChange={(v) => setPending({ repsR: v })} step={1} min={0} />
-            </div>
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Reps · per side</div>
+            <Stepper value={ex.pending.repsL} onChange={(v) => setPending({ repsL: v, repsR: v })} step={1} min={0} />
           </div>
         ) : (
           <div className="flex items-center justify-between">
@@ -1924,16 +1946,10 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, pus
                             </div>
                           )}
                           {ex.unilateral ? (
-                            <>
-                              <div className="mt-1 flex items-center justify-between">
-                                <span className="text-xs uppercase text-zinc-500">Left</span>
-                                <Stepper small value={set.repsL} onChange={(v) => patchEditSet(ei, si, { repsL: v })} step={1} min={0} />
-                              </div>
-                              <div className="mt-1 flex items-center justify-between">
-                                <span className="text-xs uppercase text-zinc-500">Right</span>
-                                <Stepper small value={set.repsR} onChange={(v) => patchEditSet(ei, si, { repsR: v })} step={1} min={0} />
-                              </div>
-                            </>
+                            <div className="mt-1 flex items-center justify-between">
+                              <span className="text-xs uppercase text-zinc-500">Reps / side</span>
+                              <Stepper small value={set.repsL} onChange={(v) => patchEditSet(ei, si, { repsL: v, repsR: v })} step={1} min={0} />
+                            </div>
                           ) : (
                             <div className="mt-1 flex items-center justify-between">
                               <span className="text-xs uppercase text-zinc-500">{ex.timed ? "Seconds" : "Reps"}</span>
@@ -2352,6 +2368,7 @@ function ExerciseEditor({ ex, mode, onSave, onDelete, onCancel }) {
         <>
           <Field label="Current weight"><Stepper small value={form.current} onChange={(v) => set({ current: v })} step={form.increment || 5} min={0} /></Field>
           <Field label="Increment"><Stepper small value={form.increment} onChange={(v) => set({ increment: v })} step={2.5} min={0.5} /></Field>
+          <Field label="Warm-up ramp"><ToggleBtn value={!!form.warmupRamp} onChange={(v) => set({ warmupRamp: v })} /></Field>
           <Field label="Load type">
             <select
               value={form.loadType || "machine"}
