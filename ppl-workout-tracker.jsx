@@ -633,7 +633,7 @@ export default function App() {
     if (!rest) { chimedRef.current = false; return undefined; }
     if (restLeft <= 0 && !chimedRef.current) {
       chimedRef.current = true;
-      playChime(audioRef.current);
+      if (!config || !config.ui || config.ui.sound !== false) playChime(audioRef.current);
       const t = setTimeout(() => setRest(null), 6000);
       return () => clearTimeout(t);
     }
@@ -645,6 +645,31 @@ export default function App() {
     setRest(restObj);
   }, []);
   const adjustRest = useCallback((d) => setRest((r) => (r ? { ...r, until: Math.max(Date.now(), r.until + d * 1000) } : r)), []);
+
+  // Keep the screen awake during an active workout (toggleable) so the rest
+  // timer stays visible on the bench — the PWA substitute for lock-screen timers.
+  const hasDraft = !!draft;
+  const keepAwake = !config || !config.ui || config.ui.keepAwake !== false;
+  useEffect(() => {
+    if (!hasDraft || !keepAwake) return undefined;
+    let lock = null;
+    let released = false;
+    const acquire = async () => {
+      try {
+        if (navigator.wakeLock && document.visibilityState === "visible" && !released) {
+          lock = await navigator.wakeLock.request("screen");
+        }
+      } catch (e) { /* unsupported or denied — timer still runs on wall clock */ }
+    };
+    acquire();
+    const onVis = () => { if (document.visibilityState === "visible") acquire(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      released = true;
+      document.removeEventListener("visibilitychange", onVis);
+      try { if (lock) lock.release(); } catch (e) { /* already released */ }
+    };
+  }, [hasDraft, keepAwake]);
 
   const draftRef = useRef(null);
   const sessionCache = useRef(new Map());
@@ -2243,6 +2268,29 @@ function SettingsScreen({ config, saveConfig, themeKey }) {
           onChange={(v) => saveConfig({ ...config, ui: { ...(config.ui || {}), theme: v } })}
           options={[{ value: "paper", label: "Light" }, { value: "dark", label: "Dark" }]}
         />
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <div className="px-1 text-xs font-semibold uppercase tracking-widest text-zinc-500">Workout</div>
+        <div className="flex flex-col divide-y divide-zinc-800 rounded-2xl border border-zinc-800 bg-zinc-900 px-4">
+          <div className="flex h-14 items-center justify-between">
+            <div className="text-sm font-semibold text-zinc-100">Keep screen awake</div>
+            <ToggleBtn
+              value={!config.ui || config.ui.keepAwake !== false}
+              onChange={(v) => saveConfig({ ...config, ui: { ...(config.ui || {}), keepAwake: v } })}
+            />
+          </div>
+          <div className="flex h-14 items-center justify-between">
+            <div className="text-sm font-semibold text-zinc-100">Timer chime</div>
+            <ToggleBtn
+              value={!config.ui || config.ui.sound !== false}
+              onChange={(v) => saveConfig({ ...config, ui: { ...(config.ui || {}), sound: v } })}
+            />
+          </div>
+        </div>
+        <div className="px-1 text-xs text-zinc-600">
+          Screen stays on while a workout is active so the rest timer is always visible. Chime off = timer end is visual only.
+        </div>
       </div>
 
       <Seg value={mode} onChange={(v) => { setMode(v); setEditingId(null); }} options={[{ value: "gym", label: "Gym" }, { value: "calisthenics", label: "Bodyweight" }]} />
