@@ -1353,6 +1353,7 @@ function HomeScreen({ index, mode, setMode, onStart, starting, qlPrompt, answerQ
 
 function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility, pushToast, onSetLogged, restActive }) {
   const [armedDiscard, setArmedDiscard] = useArmed();
+  const [armedFinish, setArmedFinish] = useArmed(3600);
   const [finishing, setFinishing] = useState(false);
   const [showMobility, setShowMobility] = useState(false);
   const [showCore, setShowCore] = useState(false);
@@ -1377,8 +1378,11 @@ function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility, push
   }
   const coreItems = mobility && mobility.core ? filterMode(mobility.core[draft.dayType]) : [];
 
+  const unloggedCount = draft.exercises.filter((e) => !e.skipped && e.sets.length === 0).length;
   const doFinish = async () => {
     if (finishing) return;
+    if (!armedFinish) { setArmedFinish(true); return; } // double-confirm: an early Finish is expensive
+    setArmedFinish(false);
     setFinishing(true);
     try { await onFinish(); } finally { setFinishing(false); }
   };
@@ -1397,9 +1401,11 @@ function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility, push
           <button
             onClick={doFinish}
             disabled={finishing}
-            className={`h-11 rounded-xl bg-lime-400 px-4 text-sm font-bold text-black active:bg-lime-300 ${TRANS} ${finishing ? "opacity-60" : ""}`}
+            className={`h-11 rounded-xl px-4 text-sm font-bold ${TRANS} ${finishing ? "opacity-60" : ""} ${
+              armedFinish ? "border border-amber-400/60 bg-zinc-900 text-amber-300" : "bg-lime-400 text-black active:bg-lime-300"
+            }`}
           >
-            Finish
+            {armedFinish ? "Sure?" : "Finish"}
           </button>
         </div>
       </header>
@@ -1458,9 +1464,15 @@ function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility, push
       <button
         onClick={doFinish}
         disabled={finishing}
-        className={`h-14 rounded-2xl bg-lime-400 text-base font-bold text-black active:bg-lime-300 ${TRANS} ${finishing ? "opacity-60" : ""}`}
+        className={`h-14 rounded-2xl text-base font-bold ${TRANS} ${finishing ? "opacity-60" : ""} ${
+          armedFinish ? "border border-amber-400/60 bg-zinc-900 text-amber-300" : "bg-lime-400 text-black active:bg-lime-300"
+        }`}
       >
-        {finishing ? "Saving…" : `Finish workout · ${totalSets} sets`}
+        {finishing
+          ? "Saving…"
+          : armedFinish
+            ? `Tap again to finish · ${totalSets} sets${unloggedCount > 0 ? ` · ${unloggedCount} exercise${unloggedCount === 1 ? "" : "s"} unlogged` : ""}`
+            : `Finish workout · ${totalSets} sets`}
       </button>
       <button
         onClick={() => { if (armedDiscard) onDiscard(); else setArmedDiscard(true); }}
