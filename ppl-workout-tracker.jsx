@@ -618,6 +618,33 @@ export default function App() {
   const [starting, setStarting] = useState(false);
   const [justFinished, setJustFinished] = useState(null); // last saved session, for the Health card
   const recordsRef = useRef({}); // { exerciseId: { weight, e1rm, date } } — all-time bests for PR flags
+  const [rest, setRest] = useState(null); // rest timer { until, total, label } — app-level so it survives tab switches
+  const [, restTick] = useState(0);
+  const audioRef = useRef(null);
+  const chimedRef = useRef(false);
+
+  useEffect(() => {
+    if (!rest) return undefined;
+    const t = setInterval(() => restTick((n) => n + 1), 500);
+    return () => clearInterval(t);
+  }, [rest]);
+  const restLeft = rest ? Math.ceil((rest.until - Date.now()) / 1000) : 0;
+  useEffect(() => {
+    if (!rest) { chimedRef.current = false; return undefined; }
+    if (restLeft <= 0 && !chimedRef.current) {
+      chimedRef.current = true;
+      playChime(audioRef.current);
+      const t = setTimeout(() => setRest(null), 6000);
+      return () => clearTimeout(t);
+    }
+    return undefined;
+  }, [rest, restLeft]);
+  const onSetLogged = useCallback((restObj) => {
+    ensureAudio(audioRef);
+    chimedRef.current = false;
+    setRest(restObj);
+  }, []);
+  const adjustRest = useCallback((d) => setRest((r) => (r ? { ...r, until: Math.max(Date.now(), r.until + d * 1000) } : r)), []);
 
   const draftRef = useRef(null);
   const sessionCache = useRef(new Map());
@@ -721,6 +748,7 @@ export default function App() {
       if (dr && Array.isArray(dr.exercises)) {
         draftRef.current = dr;
         setDraftState(dr);
+        if (dr.rest && dr.rest.until > Date.now()) setRest(dr.rest); // resume a running rest timer
         pushToast("Resumed in-progress workout");
       }
       // 24h QL check: latest gym legs session, unanswered, 12h–120h old.
@@ -797,6 +825,7 @@ export default function App() {
       for (let bump = 2; index.some((e) => e.id === id); bump += 1) id = `${makeSessionId(now)}-${bump}`;
       const d = { id, date: now.toISOString(), dayType, mode, exercises };
       setJustFinished(null);
+      setRest(null);
       setDraft(d, "now");
       setTab("workout");
     } finally {
@@ -806,6 +835,7 @@ export default function App() {
 
   const discardDraft = useCallback(() => {
     setDraft(null);
+    setRest(null);
     store.remove("draft");
     pushToast("Workout discarded");
   }, [pushToast, setDraft]);
@@ -902,6 +932,7 @@ export default function App() {
       });
     }
     setDraft(null);
+    setRest(null);
     store.remove("draft");
     setJustFinished(session);
     pushToast(`${DAY_LABEL[d.dayType]} day saved — ${entry.setCount} sets`, { tone: "success" });
@@ -1006,6 +1037,8 @@ export default function App() {
               onDiscard={discardDraft}
               mobility={config.mobility}
               pushToast={pushToast}
+              onSetLogged={onSetLogged}
+              restActive={!!rest}
             />
           ) : (
             <HomeScreen
@@ -1046,6 +1079,36 @@ export default function App() {
       )}
 
       <TabBar tab={tab} setTab={setTab} hasDraft={!!draft} />
+
+      {rest && draft && (
+        <div className="fixed inset-x-0 z-30" style={{ bottom: "calc(4rem + env(safe-area-inset-bottom))" }}>
+          <div className="mx-auto max-w-md px-4 pb-2">
+            <div className={`flex items-center gap-2 rounded-2xl border px-3 py-2 shadow-lg ${TRANS} ${
+              restLeft <= 0 ? "border-lime-400 bg-lime-400" : "border-zinc-700 bg-zinc-900"
+            }`}>
+              {restLeft <= 0 ? (
+                <div className="flex-1 pl-1 text-base font-bold text-black">Rest done — go</div>
+              ) : (
+                <>
+                  <div className="min-w-0 flex-1 pl-1">
+                    <div className="truncate text-xs text-zinc-500">Rest · {rest.label}</div>
+                    <div className="text-2xl font-bold leading-none tabular-nums text-zinc-50">{fmtClock(restLeft)}</div>
+                  </div>
+                  <button onClick={() => adjustRest(-15)} className="h-11 w-11 shrink-0 rounded-xl bg-zinc-800 text-xs font-bold text-zinc-200 active:bg-zinc-700">−15</button>
+                  <button onClick={() => adjustRest(15)} className="h-11 w-11 shrink-0 rounded-xl bg-zinc-800 text-xs font-bold text-zinc-200 active:bg-zinc-700">+15</button>
+                </>
+              )}
+              <button
+                onClick={() => setRest(null)}
+                className={`h-11 shrink-0 rounded-xl px-3 text-xs font-bold ${restLeft <= 0 ? "bg-zinc-900 text-lime-300" : "bg-zinc-800 text-zinc-200 active:bg-zinc-700"}`}
+              >
+                {restLeft <= 0 ? "Dismiss" : "Skip"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <Toasts toasts={toasts} />
     </div>
   );
@@ -1209,39 +1272,11 @@ function HomeScreen({ index, mode, setMode, onStart, starting, qlPrompt, answerQ
 
 /* ---------- logging ---------- */
 
-function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility, pushToast }) {
+function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility, pushToast, onSetLogged, restActive }) {
   const [armedDiscard, setArmedDiscard] = useArmed();
   const [finishing, setFinishing] = useState(false);
   const [showMobility, setShowMobility] = useState(false);
   const [showCore, setShowCore] = useState(false);
-  const [rest, setRest] = useState(null); // { until, total, label }
-  const [, tick] = useState(0);
-  const audioRef = useRef(null);
-  const chimedRef = useRef(false);
-
-  useEffect(() => {
-    if (!rest) return undefined;
-    const t = setInterval(() => tick((n) => n + 1), 500);
-    return () => clearInterval(t);
-  }, [rest]);
-  const restLeft = rest ? Math.ceil((rest.until - Date.now()) / 1000) : 0;
-  useEffect(() => {
-    if (!rest) { chimedRef.current = false; return undefined; }
-    if (restLeft <= 0 && !chimedRef.current) {
-      chimedRef.current = true;
-      playChime(audioRef.current);
-      const t = setTimeout(() => setRest(null), 6000);
-      return () => clearTimeout(t);
-    }
-    return undefined;
-  }, [rest, restLeft]);
-
-  const onSetLogged = (ex) => {
-    ensureAudio(audioRef);
-    chimedRef.current = false;
-    setRest({ until: Date.now() + (ex.restSec || 90) * 1000, total: ex.restSec || 90, label: ex.name });
-  };
-  const adjustRest = (d) => setRest((r) => (r ? { ...r, until: Math.max(Date.now(), r.until + d * 1000) } : r));
   const totalSets = countSets(draft.exercises);
   const dayName = DAY_LABEL[draft.dayType] || draft.dayType;
   const filterMode = (items) => (items || []).filter((it) => !(draft.mode === "calisthenics" && it.gymOnly));
@@ -1356,36 +1391,7 @@ function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility, push
       >
         {armedDiscard ? "Tap again to discard workout" : "Discard workout"}
       </button>
-      {rest && <div className="h-16" />}
-
-      {rest && (
-        <div className="fixed inset-x-0 z-30" style={{ bottom: "calc(4rem + env(safe-area-inset-bottom))" }}>
-          <div className="mx-auto max-w-md px-4 pb-2">
-            <div className={`flex items-center gap-2 rounded-2xl border px-3 py-2 shadow-lg ${TRANS} ${
-              restLeft <= 0 ? "border-lime-400 bg-lime-400" : "border-zinc-700 bg-zinc-900"
-            }`}>
-              {restLeft <= 0 ? (
-                <div className="flex-1 pl-1 text-base font-bold text-black">Rest done — go</div>
-              ) : (
-                <>
-                  <div className="min-w-0 flex-1 pl-1">
-                    <div className="truncate text-xs text-zinc-500">Rest · {rest.label}</div>
-                    <div className="text-2xl font-bold leading-none tabular-nums text-zinc-50">{fmtClock(restLeft)}</div>
-                  </div>
-                  <button onClick={() => adjustRest(-15)} className="h-11 w-11 shrink-0 rounded-xl bg-zinc-800 text-xs font-bold text-zinc-200 active:bg-zinc-700">−15</button>
-                  <button onClick={() => adjustRest(15)} className="h-11 w-11 shrink-0 rounded-xl bg-zinc-800 text-xs font-bold text-zinc-200 active:bg-zinc-700">+15</button>
-                </>
-              )}
-              <button
-                onClick={() => setRest(null)}
-                className={`h-11 shrink-0 rounded-xl px-3 text-xs font-bold ${restLeft <= 0 ? "bg-zinc-900 text-lime-300" : "bg-zinc-800 text-zinc-200 active:bg-zinc-700"}`}
-              >
-                {restLeft <= 0 ? "Dismiss" : "Skip"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {restActive && <div className="h-16" />}
     </div>
   );
 }
@@ -1518,9 +1524,10 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, pushToas
       if (mode === "gym") set.weight = Number(p.weight) || 0;
       if (cur.unilateral) { set.repsL = Number(p.repsL) || 0; set.repsR = Number(p.repsR) || 0; }
       else set.reps = Number(p.reps) || 0;
-      return patchExercise(d, idx, { sets: [...cur.sets, set] });
-    }, "now"); // checkpoint the draft on every logged set
-    if (onSetLogged) onSetLogged(ex);
+      const restObj = { until: Date.now() + (cur.restSec || 90) * 1000, total: cur.restSec || 90, label: cur.name };
+      return { ...patchExercise(d, idx, { sets: [...cur.sets, set] }), rest: restObj };
+    }, "now"); // checkpoint the draft (sets + running rest timer) on every logged set
+    if (onSetLogged) onSetLogged({ until: Date.now() + (ex.restSec || 90) * 1000, total: ex.restSec || 90, label: ex.name });
   };
 
   const removeSet = (si) => {
