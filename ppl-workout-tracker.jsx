@@ -817,34 +817,7 @@ export default function App() {
       }
       const plan = (mode === "gym" ? config.days[dayType] : config.calisthenics[dayType]) || [];
       const now = new Date();
-      const exercises = plan.map((ex) => {
-        const lastPerf = findLastPerf(sessions, ex.id);
-        const suggestion = mode === "gym" ? computeSuggestion(ex, lastPerf) : null;
-        const firstSet = lastPerf && lastPerf.sets[0];
-        const defR = (side) => {
-          if (firstSet) {
-            const v = ex.unilateral ? firstSet[side] : firstSet.reps;
-            if (v != null) return Number(v) || 0;
-          }
-          if (ex.amrap) return 10;
-          return ex.repMax || 10;
-        };
-        const pending = {};
-        if (mode === "gym") pending.weight = ex.current;
-        if (ex.unilateral) { pending.repsL = defR("repsL"); pending.repsR = defR("repsR"); }
-        else pending.reps = defR();
-        return {
-          exerciseId: ex.id, name: ex.name,
-          unilateral: !!ex.unilateral, timed: !!ex.timed, amrap: !!ex.amrap, needsBar: !!ex.needsBar,
-          loadType: ex.loadType || null, repMin: ex.repMin ?? null, repMax: ex.repMax ?? null,
-          increment: ex.increment || 0, targetSets: ex.sets || 3, current: ex.current ?? null,
-          restSec: ex.restSec || (mode === "gym" ? 120 : 90),
-          warmupRamp: !!ex.warmupRamp,
-          exNote: ex.note || "", fallback: ex.fallback || "",
-          lastPerf, suggestion, acceptedTarget: null,
-          sets: [], note: "", skipped: false, pending,
-        };
-      });
+      const exercises = plan.map((ex) => buildDraftExercise(ex, sessions, mode));
       // De-dupe the minute-resolution id so two same-minute sessions can't overwrite each other.
       let id = makeSessionId(now);
       for (let bump = 2; index.some((e) => e.id === id); bump += 1) id = `${makeSessionId(now)}-${bump}`;
@@ -966,6 +939,64 @@ export default function App() {
     }
   }, [persist, pushToast, setDraft]);
 
+  /* --- reopen a finished session as the active draft (keeps its id + date) --- */
+  const reopenSession = useCallback(async (session) => {
+    if (!config) return;
+    // Remove the stored session first so last-time cards and suggestions exclude it.
+    store.remove(`session:${session.id}`);
+    sessionCache.current.delete(session.id);
+    setIndex((prev) => {
+      const next = prev.filter((e) => e.id !== session.id);
+      persist("sessions-index", next, "history");
+      return next;
+    });
+    setViewer(null);
+    const { dayType, mode } = session;
+    const recent = index.filter((e) => e.dayType === dayType && e.mode === mode && e.id !== session.id).slice(0, 6);
+    const sessions = [];
+    for (const e of recent) {
+      const s = await loadSession(e.id);
+      if (s) sessions.push(s);
+    }
+    const plan = (mode === "gym" ? config.days[dayType] : config.calisthenics[dayType]) || [];
+    const exercises = plan.map((ex) => {
+      const de = buildDraftExercise(ex, sessions, mode);
+      const logged = (session.exercises || []).find((se) => se.exerciseId === ex.id);
+      if (logged && logged.sets && logged.sets.length) {
+        de.sets = logged.sets;
+        de.note = logged.note || "";
+        const last = logged.sets[logged.sets.length - 1];
+        if (mode === "gym" && last.weight != null) de.pending.weight = last.weight;
+        if (de.unilateral) { de.pending.repsL = Number(last.repsL) || de.pending.repsL; de.pending.repsR = Number(last.repsR) || de.pending.repsR; }
+        else if (last.reps != null) de.pending.reps = Number(last.reps) || de.pending.reps;
+      }
+      return de;
+    });
+    // Keep any logged exercises that are no longer in the day's plan.
+    for (const se of session.exercises || []) {
+      if (!exercises.some((de) => de.exerciseId === se.exerciseId)) {
+        exercises.push({
+          exerciseId: se.exerciseId, name: se.name,
+          unilateral: !!se.unilateral, timed: !!se.timed, amrap: false, needsBar: false,
+          loadType: null, repMin: null, repMax: null, increment: 5,
+          targetSets: se.sets.length || 3, current: null, restSec: mode === "gym" ? 120 : 90,
+          warmupRamp: false, exNote: "", fallback: "",
+          lastPerf: null, suggestion: null, acceptedTarget: null,
+          sets: se.sets, note: se.note || "", skipped: false,
+          pending: se.unilateral
+            ? { weight: se.sets[0] && se.sets[0].weight, repsL: 10, repsR: 10 }
+            : { weight: se.sets[0] && se.sets[0].weight, reps: 10 },
+        });
+      }
+    }
+    const d = { id: session.id, date: session.date, dayType, mode, exercises };
+    setJustFinished(null);
+    setRest(null);
+    setDraft(d, "now");
+    setTab("workout");
+    pushToast(`Reopened ${DAY_LABEL[dayType] || dayType} · ${shortDate(session.date)} — finish again when done`);
+  }, [config, index, loadSession, persist, pushToast, setDraft]);
+
   /* --- save edited session (from viewer) --- */
   const saveEditedSession = useCallback(async (session) => {
     const ok = await store.set(`session:${session.id}`, session);
@@ -986,6 +1017,27 @@ export default function App() {
       persist("sessions-index", next, "history");
       return next;
     });
+    // Keep all-time records truthful after edits (upward-only, no PR fanfare).
+    if (session.mode === "gym") {
+      const recs = { ...recordsRef.current };
+      let changed = false;
+      for (const ex of session.exercises) {
+        let topW = 0, bestE1 = 0;
+        for (const st of ex.sets || []) {
+          const w = Number(st.weight) || 0;
+          if (w > topW) topW = w;
+          const e1 = epleyE1rm(w, setEffectiveReps(st, !!ex.unilateral));
+          if (e1 > bestE1) bestE1 = e1;
+        }
+        if (topW <= 0) continue;
+        const rec = recs[ex.exerciseId];
+        if (!rec || topW > rec.weight || bestE1 > rec.e1rm) {
+          recs[ex.exerciseId] = { weight: Math.max(topW, rec ? rec.weight : 0), e1rm: Math.max(bestE1, rec ? rec.e1rm : 0), date: session.date };
+          changed = true;
+        }
+      }
+      if (changed) { recordsRef.current = recs; persist("records", recs, "records"); }
+    }
     pushToast("Session updated", { tone: "success" });
     return true;
   }, [persist, pushToast]);
@@ -1099,6 +1151,8 @@ export default function App() {
           onClose={() => setViewer(null)}
           onSave={saveEditedSession}
           onDelete={deleteSession}
+          onReopen={reopenSession}
+          hasDraft={!!draft}
           pushToast={pushToast}
         />
       )}
@@ -1495,6 +1549,36 @@ function MobilityScreen({ title, subtitle, sections, doneLabel, onClose }) {
   );
 }
 
+// Build one draft exercise from a config exercise + recent same-day sessions (newest first).
+function buildDraftExercise(ex, sessions, mode) {
+  const lastPerf = findLastPerf(sessions, ex.id);
+  const suggestion = mode === "gym" ? computeSuggestion(ex, lastPerf) : null;
+  const firstSet = lastPerf && lastPerf.sets[0];
+  const defR = (side) => {
+    if (firstSet) {
+      const v = ex.unilateral ? firstSet[side] : firstSet.reps;
+      if (v != null) return Number(v) || 0;
+    }
+    if (ex.amrap) return 10;
+    return ex.repMax || 10;
+  };
+  const pending = {};
+  if (mode === "gym") pending.weight = ex.current;
+  if (ex.unilateral) { pending.repsL = defR("repsL"); pending.repsR = defR("repsR"); }
+  else pending.reps = defR();
+  return {
+    exerciseId: ex.id, name: ex.name,
+    unilateral: !!ex.unilateral, timed: !!ex.timed, amrap: !!ex.amrap, needsBar: !!ex.needsBar,
+    loadType: ex.loadType || null, repMin: ex.repMin ?? null, repMax: ex.repMax ?? null,
+    increment: ex.increment || 0, targetSets: ex.sets || 3, current: ex.current ?? null,
+    restSec: ex.restSec || (mode === "gym" ? 120 : 90),
+    warmupRamp: !!ex.warmupRamp,
+    exNote: ex.note || "", fallback: ex.fallback || "",
+    lastPerf, suggestion, acceptedTarget: null,
+    sets: [], note: "", skipped: false, pending,
+  };
+}
+
 /* ---------- rest-timer audio (iOS PWAs have no vibration API — sound + visuals carry feedback) ---------- */
 
 function ensureAudio(ref) {
@@ -1826,13 +1910,14 @@ function findConfigEx(config, exerciseId) {
   return null;
 }
 
-function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, pushToast }) {
+function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, onReopen, hasDraft, pushToast }) {
   const [session, setSession] = useState(null);
   const [missing, setMissing] = useState(false);
   const [editing, setEditing] = useState(false);
   const [edit, setEdit] = useState(null);
   const [saving, setSaving] = useState(false);
   const [armedDelete, setArmedDelete] = useArmed();
+  const [armedReopen, setArmedReopen] = useArmed();
 
   useEffect(() => {
     let alive = true;
@@ -1874,6 +1959,24 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, pus
       return { ...prev, exercises };
     });
   };
+  const addExerciseToEdit = (p) => {
+    setEdit((prev) => {
+      const isGym = prev.mode === "gym";
+      const firstSet = {};
+      if (isGym) firstSet.weight = p.current ?? 0;
+      if (p.unilateral) { firstSet.repsL = p.repMax || 10; firstSet.repsR = p.repMax || 10; }
+      else firstSet.reps = p.timed ? (p.repMax || 45) : (p.repMax || 10);
+      return {
+        ...prev,
+        exercises: [...prev.exercises, {
+          exerciseId: p.id, name: p.name,
+          unilateral: p.unilateral || undefined, timed: p.timed || undefined,
+          sets: [firstSet], note: "",
+        }],
+      };
+    });
+  };
+
   const addEditSet = (ei) => {
     setEdit((prev) => {
       const exercises = prev.exercises.map((e, i) => {
@@ -2010,6 +2113,40 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, pus
                 </section>
               );
             })}
+
+            {editing && (() => {
+              const plan = (s.mode === "gym" ? config.days[s.dayType] : config.calisthenics[s.dayType]) || [];
+              const missingPlan = plan.filter((p) => !edit.exercises.some((e) => e.exerciseId === p.id));
+              if (missingPlan.length === 0) return null;
+              return (
+                <div className="flex flex-col gap-2 rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+                  <div className="text-sm font-semibold text-zinc-100">Add exercise</div>
+                  <div className="flex flex-wrap gap-2">
+                    {missingPlan.map((p) => (
+                      <button
+                        key={p.id}
+                        onClick={() => addExerciseToEdit(p)}
+                        className={`h-11 rounded-xl border border-zinc-700 px-3 text-sm font-semibold text-zinc-200 active:bg-zinc-800 ${TRANS}`}
+                      >
+                        + {p.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {!editing && (
+              <button
+                onClick={() => { if (!hasDraft || armedReopen) onReopen(s); else setArmedReopen(true); }}
+                className={`flex h-12 items-center justify-center gap-2 rounded-2xl border text-sm font-semibold ${TRANS} ${
+                  armedReopen ? "border-amber-400/60 text-amber-300" : "border-zinc-700 text-zinc-200 active:bg-zinc-800"
+                }`}
+              >
+                <RotateCcw size={16} />
+                {hasDraft && armedReopen ? "Tap again — replaces your current workout" : "Reopen as active workout"}
+              </button>
+            )}
 
             {!editing && <HealthLogButton session={s} pushToast={pushToast} />}
 
