@@ -246,6 +246,7 @@ html{color-scheme:${t.scheme}}
 `;
 }
 
+const AUTO_FINISH_MS = 3 * 3600 * 1000; // idle threshold before an open workout self-finishes
 const round2 = (n) => Math.round(n * 100) / 100;
 const fmtW = (n) => (n == null || Number.isNaN(Number(n)) ? "—" : String(round2(Number(n))));
 const pad2 = (n) => String(n).padStart(2, "0");
@@ -706,6 +707,7 @@ export default function App() {
 
   /* --- draft mutation + checkpointing --- */
   const setDraft = useCallback((next, save) => {
+    if (next) next = { ...next, touchedAt: Date.now() }; // staleness clock for auto-finish
     draftRef.current = next;
     setDraftState(next);
     if (draftTimer.current) clearTimeout(draftTimer.current);
@@ -839,7 +841,7 @@ export default function App() {
   }, [pushToast, setDraft]);
 
   /* --- finish workout --- */
-  const finishWorkout = useCallback(async () => {
+  const finishWorkout = useCallback(async (opts = {}) => {
     const d = draftRef.current;
     if (!d) return;
     const kept = d.exercises
@@ -884,7 +886,7 @@ export default function App() {
     }
     const isLegsGym = d.mode === "gym" && d.dayType === "legs";
     const session = {
-      id: d.id, date: d.date, endDate: new Date().toISOString(),
+      id: d.id, date: d.date, endDate: new Date(opts.endAt || Date.now()).toISOString(),
       dayType: d.dayType, mode: d.mode,
       exercises: kept, qlCheck: isLegsGym ? null : undefined,
     };
@@ -938,6 +940,33 @@ export default function App() {
       pushToast(`🎉 PR: ${prNames.slice(0, 2).join(", ")}${prNames.length > 2 ? ` +${prNames.length - 2}` : ""}`, { tone: "success", ttl: 6500 });
     }
   }, [persist, pushToast, setDraft]);
+
+  /* --- auto-finish workouts left open too long --- */
+  const maybeAutoFinish = useCallback(() => {
+    const d = draftRef.current;
+    if (!d) return;
+    if (config && config.ui && config.ui.autoFinish === false) return;
+    const touched = d.touchedAt || new Date(d.date).getTime() || 0;
+    if (!(Date.now() - touched >= AUTO_FINISH_MS)) return;
+    const hasSets = d.exercises.some((e) => e.sets && e.sets.length > 0);
+    if (hasSets) {
+      pushToast("Workout was idle 3+ hours — auto-finished");
+      finishWorkout({ endAt: touched });
+    } else {
+      setDraft(null);
+      setRest(null);
+      store.remove("draft");
+      pushToast("Discarded an empty workout left open for 3+ hours");
+    }
+  }, [config, finishWorkout, pushToast, setDraft]);
+  useEffect(() => {
+    if (phase !== "ready") return undefined;
+    maybeAutoFinish(); // catch a stale draft right after boot resume
+    const t = setInterval(maybeAutoFinish, 60000);
+    const onVis = () => { if (document.visibilityState === "visible") maybeAutoFinish(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVis); };
+  }, [phase, maybeAutoFinish]);
 
   /* --- reopen a finished session as the active draft (keeps its id + date) --- */
   const reopenSession = useCallback(async (session) => {
@@ -2436,9 +2465,17 @@ function SettingsScreen({ config, saveConfig, themeKey }) {
               onChange={(v) => saveConfig({ ...config, ui: { ...(config.ui || {}), sound: v } })}
             />
           </div>
+          <div className="flex h-14 items-center justify-between">
+            <div className="text-sm font-semibold text-zinc-100">Auto-finish idle workouts</div>
+            <ToggleBtn
+              value={!config.ui || config.ui.autoFinish !== false}
+              onChange={(v) => saveConfig({ ...config, ui: { ...(config.ui || {}), autoFinish: v } })}
+            />
+          </div>
         </div>
         <div className="px-1 text-xs text-zinc-600">
           Screen stays on while a workout is active so the rest timer is always visible. Chime off = timer end is visual only.
+          A workout with no activity for 3 hours finishes itself (or is discarded if nothing was logged).
         </div>
       </div>
 
