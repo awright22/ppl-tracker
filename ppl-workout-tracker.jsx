@@ -324,7 +324,10 @@ export function computeSuggestion(ex, lastPerf) {
   if (!lastPerf || !Array.isArray(lastPerf.sets) || lastPerf.sets.length === 0) return null;
   const vals = lastPerf.sets.map((s) => setEffectiveReps(s, ex.unilateral));
   const cur = Number(ex.current) || 0;
-  if (vals.every((v) => v >= ex.repMax)) {
+  // Top-set progression: hitting the rep ceiling on the FIRST set last session
+  // earns the bump even if later sets dropped off — fatigue fall-off is normal.
+  // (Unilateral: the first set's weaker side must hit the ceiling.)
+  if (vals[0] >= ex.repMax) {
     const target = round2(cur + (Number(ex.increment) || 0));
     return { kind: "bump", target, label: `Go to ${fmtW(target)}` };
   }
