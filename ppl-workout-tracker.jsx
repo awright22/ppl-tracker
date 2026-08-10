@@ -320,30 +320,63 @@ export function setEffectiveReps(set, unilateral) {
   return Number(set.reps) || 0;
 }
 
-export function computeSuggestion(ex, lastPerf) {
-  if (!lastPerf || !Array.isArray(lastPerf.sets) || lastPerf.sets.length === 0) return null;
-  const vals = lastPerf.sets.map((s) => setEffectiveReps(s, ex.unilateral));
+// A weight drop of roughly 5-10%, snapped to the exercise's increment.
+export function deloadTarget(current, increment) {
+  const inc = Number(increment) > 0 ? Number(increment) : 5;
+  let t = Math.floor((current * 0.925) / inc) * inc;
+  if (t >= current) t = current - inc;
+  if (current - t > current * 0.10 && t + inc < current) t += inc; // pull back inside ~10% when possible
+  return Math.max(inc, round2(t));
+}
+
+// perfs: newest-first performances of ONE exercise (each { sets }).
+// Rules: set 1 at the ceiling AND all sets at/above the floor -> bump;
+// set 1 at the ceiling but a set under the floor -> hold & rebuild;
+// set 1 under the ceiling, all in range -> hold & add reps;
+// 2+ consecutive sessions with MULTIPLE sets under the floor -> suggest ~5-10% drop.
+export function computeSuggestion(ex, perfs) {
+  if (!Array.isArray(perfs) || perfs.length === 0) return null;
+  const last = perfs[0];
+  if (!last || !Array.isArray(last.sets) || last.sets.length === 0) return null;
   const cur = Number(ex.current) || 0;
-  // Top-set progression: hitting the rep ceiling on the FIRST set last session
-  // earns the bump even if later sets dropped off — fatigue fall-off is normal.
-  // (Unilateral: the first set's weaker side must hit the ceiling.)
-  if (vals[0] >= ex.repMax) {
+  const repsOf = (perf) => perf.sets.map((s) => setEffectiveReps(s, ex.unilateral));
+
+  let streak = 0;
+  for (const perf of perfs) {
+    const below = repsOf(perf).filter((v) => v < ex.repMin).length;
+    if (below >= 2) streak += 1; else break;
+  }
+  if (streak >= 2) {
+    const target = deloadTarget(cur, ex.increment);
+    return { kind: "deload", target, label: `Drop to ${fmtW(target)}?` };
+  }
+
+  const vals = repsOf(last);
+  if (vals[0] >= ex.repMax && vals.every((v) => v >= ex.repMin)) {
     const target = round2(cur + (Number(ex.increment) || 0));
     return { kind: "bump", target, label: `Go to ${fmtW(target)}` };
   }
   if (vals.some((v) => v < ex.repMin)) {
-    return { kind: "build", target: cur, label: `Stay at ${fmtW(cur)} — build reps` };
+    return { kind: "build", target: cur, label: `Stay at ${fmtW(cur)} — build sets to ${ex.repMin}+` };
   }
-  return { kind: "hold", target: cur, label: `Stay at ${fmtW(cur)}` };
+  return { kind: "hold", target: cur, label: `Stay at ${fmtW(cur)} — add reps` };
 }
 
 // sessions: newest-first list of full session objects for one dayType+mode.
-export function findLastPerf(sessions, exerciseId) {
+export function findRecentPerfs(sessions, exerciseId, limit = 4) {
+  const out = [];
   for (const s of sessions) {
     const ex = (s.exercises || []).find((e) => e.exerciseId === exerciseId && e.sets && e.sets.length > 0);
-    if (ex) return { date: s.date, sessionId: s.id, sets: ex.sets, note: ex.note || "" };
+    if (ex) {
+      out.push({ date: s.date, sessionId: s.id, sets: ex.sets, note: ex.note || "" });
+      if (out.length >= limit) break;
+    }
   }
-  return null;
+  return out;
+}
+
+export function findLastPerf(sessions, exerciseId) {
+  return findRecentPerfs(sessions, exerciseId, 1)[0] || null;
 }
 
 function setVolume(set, unilateral) {
@@ -1595,8 +1628,9 @@ function MobilityScreen({ title, subtitle, sections, doneLabel, onClose }) {
 
 // Build one draft exercise from a config exercise + recent same-day sessions (newest first).
 function buildDraftExercise(ex, sessions, mode) {
-  const lastPerf = findLastPerf(sessions, ex.id);
-  const suggestion = mode === "gym" ? computeSuggestion(ex, lastPerf) : null;
+  const perfs = findRecentPerfs(sessions, ex.id, 4);
+  const lastPerf = perfs[0] || null;
+  const suggestion = mode === "gym" ? computeSuggestion(ex, perfs) : null;
   const firstSet = lastPerf && lastPerf.sets[0];
   const defR = (side) => {
     if (firstSet) {
@@ -1725,7 +1759,7 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, pushToas
     mutateDraft((d) => {
       const cur = d.exercises[idx];
       const s = cur.suggestion;
-      if (!s || s.kind !== "bump") return d;
+      if (!s || (s.kind !== "bump" && s.kind !== "deload")) return d;
       const accepted = cur.acceptedTarget == null;
       return patchExercise(d, idx, {
         acceptedTarget: accepted ? s.target : null,
@@ -1799,12 +1833,22 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, pushToas
           <div className="text-sm text-zinc-500">First time — no history yet</div>
         )}
         {mode === "gym" && sug && (
-          sug.kind === "bump" ? (
+          sug.kind === "bump" || sug.kind === "deload" ? (
             <button
               onClick={acceptSuggestion}
-              className={`${chipBase} ${TRANS} ${ex.acceptedTarget != null ? "border border-lime-400 bg-zinc-900 text-lime-300" : "bg-lime-400 text-black active:bg-lime-300"}`}
+              className={`${chipBase} ${TRANS} ${
+                ex.acceptedTarget != null
+                  ? "border border-lime-400 bg-zinc-900 text-lime-300"
+                  : sug.kind === "bump"
+                    ? "bg-lime-400 text-black active:bg-lime-300"
+                    : "border border-amber-400/60 text-amber-300 active:bg-zinc-800"
+              }`}
             >
-              {ex.acceptedTarget != null ? <><Check size={14} /> Going to {fmtW(sug.target)}</> : <><ChevronUp size={14} /> {sug.label}</>}
+              {ex.acceptedTarget != null
+                ? <><Check size={14} /> {sug.kind === "deload" ? "Dropping" : "Going"} to {fmtW(sug.target)}</>
+                : sug.kind === "bump"
+                  ? <><ChevronUp size={14} /> {sug.label}</>
+                  : <><ChevronDown size={14} /> {sug.label}</>}
             </button>
           ) : (
             <span className={`${chipBase} border ${sug.kind === "build" ? "border-amber-400/60 text-amber-300" : "border-zinc-700 text-zinc-400"}`}>
