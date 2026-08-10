@@ -1,7 +1,7 @@
 // Builds the installable PWA into ../docs (GitHub Pages serves /docs).
 // Usage: node build.mjs  (needs node_modules with react/recharts/lucide-react/esbuild/@tailwindcss/browser)
 import { execSync } from "child_process";
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync, renameSync, readdirSync, unlinkSync } from "fs";
 import { createHash } from "crypto";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
@@ -22,10 +22,22 @@ const twSrc = [
   join(here, "..", "node_modules", "@tailwindcss", "browser", "dist", "index.global.js"),
 ].find(existsSync);
 if (!twSrc) throw new Error("@tailwindcss/browser not found — npm install first");
-copyFileSync(twSrc, join(docs, "tw.js"));
 
 const hash = createHash("sha256").update(readFileSync(join(docs, "app.js"))).digest("hex").slice(0, 10);
 const builtAt = new Date().toISOString();
+
+// Content-hashed asset names: a fresh index.html can only reference files no
+// stale service-worker cache has ever seen, so new code always loads.
+const appName = `app-${hash}.js`;
+renameSync(join(docs, "app.js"), join(docs, appName));
+const twHash = createHash("sha256").update(readFileSync(twSrc)).digest("hex").slice(0, 10);
+const twName = `tw-${twHash}.js`;
+copyFileSync(twSrc, join(docs, twName));
+for (const f of readdirSync(docs)) {
+  if ((/^app-[0-9a-f]+\.js$/.test(f) && f !== appName) || (/^tw-[0-9a-f]+\.js$/.test(f) && f !== twName) || f === "tw.js") {
+    unlinkSync(join(docs, f));
+  }
+}
 
 // Served fresh (never precached) so the running app can detect newer deploys.
 writeFileSync(join(docs, "version.json"), JSON.stringify({ hash, builtAt }));
@@ -46,7 +58,7 @@ writeFileSync(join(docs, "manifest.webmanifest"), JSON.stringify({
 
 writeFileSync(join(docs, "sw.js"), `// PPL Tracker service worker — app shell cache (build ${hash})
 const CACHE = "ppl-${hash}";
-const ASSETS = ["./", "./index.html", "./app.js", "./tw.js", "./manifest.webmanifest", "./icon-180.png", "./icon-192.png", "./icon-512.png"];
+const ASSETS = ["./", "./index.html", "./${appName}", "./${twName}", "./manifest.webmanifest", "./icon-180.png", "./icon-192.png", "./icon-512.png"];
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
 });
@@ -90,8 +102,8 @@ writeFileSync(join(docs, "index.html"), `<!doctype html>
 <body>
 <div id="root"><div style="padding:6rem 1rem;text-align:center;color:#71717a;font-size:14px">Loading PPL Tracker…</div></div>
 <script>window.__PPL_BUILD__=${JSON.stringify({ hash, builtAt })};</script>
-<script src="./tw.js"></script>
-<script src="./app.js"></script>
+<script src="./${twName}"></script>
+<script src="./${appName}"></script>
 </body>
 </html>
 `);

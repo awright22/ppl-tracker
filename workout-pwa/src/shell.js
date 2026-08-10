@@ -439,7 +439,7 @@ export async function startShell(mountApp) {
   if (queue.length) flush();
 
   if ("serviceWorker" in navigator) {
-    try { navigator.serviceWorker.register("./sw.js"); } catch (e) { /* offline shell unavailable */ }
+    try { navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" }); } catch (e) { /* offline shell unavailable */ }
   }
 }
 
