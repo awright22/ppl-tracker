@@ -2596,6 +2596,10 @@ function SettingsScreen({ config, saveConfig, themeKey }) {
         </button>
         <div className="text-center text-xs text-zinc-600">
           {store.isNative() ? "Data persists on this device via app storage" : "Preview mode — storage is in-memory only"}
+          <br />
+          {typeof window !== "undefined" && window.__PPL_BUILD__
+            ? `Build ${String(window.__PPL_BUILD__.hash).slice(0, 7)} · ${new Date(window.__PPL_BUILD__.builtAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`
+            : "Claude artifact build"}
         </div>
       </div>
     </div>

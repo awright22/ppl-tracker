@@ -25,6 +25,10 @@ if (!twSrc) throw new Error("@tailwindcss/browser not found — npm install firs
 copyFileSync(twSrc, join(docs, "tw.js"));
 
 const hash = createHash("sha256").update(readFileSync(join(docs, "app.js"))).digest("hex").slice(0, 10);
+const builtAt = new Date().toISOString();
+
+// Served fresh (never precached) so the running app can detect newer deploys.
+writeFileSync(join(docs, "version.json"), JSON.stringify({ hash, builtAt }));
 
 writeFileSync(join(docs, "manifest.webmanifest"), JSON.stringify({
   name: "PPL Tracker",
@@ -54,6 +58,7 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== location.origin) return; // sheet sync passes through
+  if (url.pathname.endsWith("/version.json")) return; // update checks must always hit the network
   if (e.request.mode === "navigate") {
     e.respondWith(fetch(e.request).then((res) => {
       const copy = res.clone();
@@ -84,6 +89,7 @@ writeFileSync(join(docs, "index.html"), `<!doctype html>
 </head>
 <body>
 <div id="root"><div style="padding:6rem 1rem;text-align:center;color:#71717a;font-size:14px">Loading PPL Tracker…</div></div>
+<script>window.__PPL_BUILD__=${JSON.stringify({ hash, builtAt })};</script>
 <script src="./tw.js"></script>
 <script src="./app.js"></script>
 </body>

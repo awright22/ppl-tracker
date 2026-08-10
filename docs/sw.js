@@ -1,5 +1,5 @@
-// PPL Tracker service worker — app shell cache (build 06da27c231)
-const CACHE = "ppl-06da27c231";
+// PPL Tracker service worker — app shell cache (build 72d2e1c7c0)
+const CACHE = "ppl-72d2e1c7c0";
 const ASSETS = ["./", "./index.html", "./app.js", "./tw.js", "./manifest.webmanifest", "./icon-180.png", "./icon-192.png", "./icon-512.png"];
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
@@ -12,6 +12,7 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== location.origin) return; // sheet sync passes through
+  if (url.pathname.endsWith("/version.json")) return; // update checks must always hit the network
   if (e.request.mode === "navigate") {
     e.respondWith(fetch(e.request).then((res) => {
       const copy = res.clone();

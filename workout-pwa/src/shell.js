@@ -218,6 +218,42 @@ function importBackup(text) {
 let stripEl = null;
 let panelEl = null;
 
+/* ---------- build version + one-tap updates ---------- */
+
+const BUILD = (typeof window !== "undefined" && window.__PPL_BUILD__) || null;
+let updateReady = null; // version.json payload of a newer deploy
+
+async function checkForUpdate() {
+  if (!BUILD) return false;
+  try {
+    const res = await fetch("./version.json?ts=" + Date.now(), { cache: "no-store" });
+    const v = await res.json();
+    if (v && v.hash && v.hash !== BUILD.hash) {
+      updateReady = v;
+      renderStrip();
+      return true;
+    }
+  } catch (e) { /* offline — check again later */ }
+  return false;
+}
+
+async function applyUpdate() {
+  if (stripEl) stripEl.textContent = "Updating…";
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (reg) {
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (!reloaded) { reloaded = true; location.reload(); }
+      });
+      await reg.update(); // new SW installs, skipWaiting + claim, then we reload once
+      setTimeout(() => { if (!reloaded) { reloaded = true; location.reload(); } }, 4000);
+      return;
+    }
+  } catch (e) { /* fall through */ }
+  location.reload();
+}
+
 function fmtTime(ts) {
   if (!ts) return "";
   return new Date(ts).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
@@ -236,6 +272,11 @@ function stripLabel() {
 
 function renderStrip() {
   if (!stripEl) return;
+  if (updateReady) {
+    stripEl.textContent = `⬆︎ Update ready (build ${String(updateReady.hash).slice(0, 7)}) — tap to install`;
+    stripEl.className = "w-full text-center text-xs py-1 border-b cursor-pointer select-none bg-zinc-950 text-lime-300 border-zinc-800";
+    return;
+  }
   stripEl.textContent = stripLabel();
   stripEl.className =
     "w-full text-center text-xs py-1 border-b cursor-pointer select-none " +
@@ -333,6 +374,20 @@ function buildPanel() {
     } catch (e) { setStatus("Import failed: " + (e.message || e), true); }
   };
 
+  const buildRow = el("div", "flex items-center justify-between gap-2");
+  const buildInfo = el("div", "text-xs text-zinc-500",
+    BUILD ? `Build ${String(BUILD.hash).slice(0, 7)} · ${new Date(BUILD.builtAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "Build unknown");
+  const checkBtn = el("button", "h-11 shrink-0 rounded-xl border border-zinc-700 px-3 text-xs font-semibold text-zinc-300", "Check for updates");
+  checkBtn.onclick = async () => {
+    setStatus("Checking…");
+    const newer = await checkForUpdate();
+    if (newer) { setStatus(`Newer build ${String(updateReady.hash).slice(0, 7)} available — tap the strip to install.`); panelEl.classList.add("hidden"); }
+    else setStatus(BUILD ? "You're on the latest build." : "No build info in this environment.");
+  };
+  buildRow.appendChild(buildInfo);
+  buildRow.appendChild(checkBtn);
+  card.appendChild(buildRow);
+
   const steps = el("div", "text-xs text-zinc-500 leading-relaxed");
   steps.innerHTML =
     "<b class='text-zinc-300'>One-time setup:</b> create a Google Sheet → Extensions → Apps Script → " +
@@ -368,8 +423,10 @@ export async function startShell(mountApp) {
   const root = document.getElementById("root");
   root.parentNode.insertBefore(stripEl, root);
   buildPanel();
-  stripEl.onclick = () => panelEl.__open();
+  stripEl.onclick = () => { if (updateReady) applyUpdate(); else panelEl.__open(); };
   renderStrip();
+  checkForUpdate();
+  setInterval(checkForUpdate, 3600 * 1000);
 
   if (cfg && cfg.url && navigator.onLine !== false) {
     try { await pullAndMerge(); } catch (e) { lastError = String(e.message || e); }
@@ -378,7 +435,7 @@ export async function startShell(mountApp) {
   mountApp();
 
   window.addEventListener("online", () => flush());
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) flush(); });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { flush(); checkForUpdate(); } });
   if (queue.length) flush();
 
   if ("serviceWorker" in navigator) {
