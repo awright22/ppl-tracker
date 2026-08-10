@@ -2308,7 +2308,7 @@ function ProgressScreen({ config, index, loadSession, onOpen }) {
           />
           <ChartCard
             title={metric === "e1rm" ? "Est. 1RM (Epley)" : "Best-set volume (weight × reps)"}
-            sub={exCfg && exCfg.unilateral ? "weaker side" : null}
+            sub={exCfg && exCfg.unilateral ? "per side" : null}
             headerRight={
               <div className="flex rounded-lg bg-zinc-950 p-1">
                 {[["e1rm", "e1RM"], ["volume", "Volume"]].map(([key, label]) => (
