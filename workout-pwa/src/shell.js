@@ -79,7 +79,7 @@ export function installStorage() {
 
 /* ---------- sheet sync ---------- */
 
-async function api(body, timeoutMs = 8000) {
+async function api(body, timeoutMs = 20000) {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), timeoutMs);
   try {
@@ -105,23 +105,33 @@ async function api(body, timeoutMs = 8000) {
   }
 }
 
+// Pushes go up in batches: a bulk backlog (e.g. a 100-session history import)
+// would blow any single request's timeout while Apps Script upserts rows and
+// rebuilds the readable tabs. Small batches keep each request quick and let
+// the pending count visibly drain.
+const PUSH_BATCH = 25;
+
 export async function flush() {
   if (!cfg || !cfg.url || flushing || queue.length === 0) { renderStrip(); return; }
   if (typeof navigator !== "undefined" && navigator.onLine === false) { renderStrip(); return; }
   flushing = true;
   renderStrip();
-  const keys = [...queue];
-  const rows = keys.map((key) => ({
-    key,
-    json: localStorage.getItem(PREFIX + key), // null => deletion tombstone
-    updatedAt: meta[key] || Date.now(),
-  }));
   try {
-    await api({ action: "push", token: cfg.token || "", rows });
-    const sentAt = {};
-    keys.forEach((k, i) => { sentAt[k] = rows[i].updatedAt; });
-    queue = queue.filter((k) => (meta[k] || 0) > (sentAt[k] || 0)); // keep keys edited mid-flight
-    saveQueue();
+    while (queue.length > 0) {
+      const keys = queue.slice(0, PUSH_BATCH);
+      const rows = keys.map((key) => ({
+        key,
+        json: localStorage.getItem(PREFIX + key), // null => deletion tombstone
+        updatedAt: meta[key] || Date.now(),
+      }));
+      // Generous, size-scaled timeout: the sheet-side rebuild takes seconds.
+      await api({ action: "push", token: cfg.token || "", rows }, 15000 + rows.length * 1500);
+      const sentAt = {};
+      keys.forEach((k, i) => { sentAt[k] = rows[i].updatedAt; });
+      queue = queue.filter((k) => (meta[k] || 0) > (sentAt[k] || 0)); // keep keys edited mid-flight
+      saveQueue();
+      renderStrip(); // pending count drains batch by batch
+    }
     lastSyncAt = Date.now();
     writeJson("ppl.__lastSync", lastSyncAt);
     lastError = "";
@@ -343,7 +353,7 @@ function fmtTime(ts) {
 
 function stripLabel() {
   if (!cfg || !cfg.url) return "☁︎  Back up to Google Sheets — tap to set up";
-  if (flushing) return "☁︎  Sheet · syncing…";
+  if (flushing) return `☁︎  Sheet · syncing…${queue.length > PUSH_BATCH ? ` ${queue.length} left` : ""}`;
   if (queue.length > 0) {
     const off = typeof navigator !== "undefined" && navigator.onLine === false;
     return `☁︎  Sheet · ${queue.length} pending${off ? " (offline)" : ""}`;
