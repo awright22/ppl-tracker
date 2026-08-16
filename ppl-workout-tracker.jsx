@@ -2257,6 +2257,9 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, onR
 
 /* ---------- progress ---------- */
 
+const PROGRESS_RANGES = [["3m", "3M"], ["6m", "6M"], ["all", "All"]];
+const PROGRESS_RANGE_DAYS = { "3m": 91, "6m": 183, all: null };
+
 function ProgressScreen({ config, index, loadSession, onOpen }) {
   const T = THEMES[config && config.ui && config.ui.theme === "dark" ? "dark" : "paper"];
   const chartTokens = { grid: T.chartGrid, tick: T.chartTick, surface: T.card, cursor: T.line2 };
@@ -2272,13 +2275,16 @@ function ProgressScreen({ config, index, loadSession, onOpen }) {
   const [exId, setExId] = useState(firstWithData);
   const [points, setPoints] = useState(null); // null = loading
   const [metric, setMetric] = useState("e1rm"); // second chart: "e1rm" | "volume"
+  const [range, setRange] = useState("all"); // "3m" | "6m" | "all"
   const exCfg = findConfigEx(config, exId);
 
   useEffect(() => {
     let alive = true;
     (async () => {
       setPoints(null);
-      const entries = [...gymEntries].sort(byDateAsc).slice(-60);
+      const days = PROGRESS_RANGE_DAYS[range];
+      const cutoff = days ? new Date(Date.now() - days * 86400000).toISOString() : null;
+      const entries = gymEntries.filter((e) => !cutoff || e.date >= cutoff).sort(byDateAsc).slice(-240);
       const pts = [];
       for (const e of entries) {
         const s = await loadSession(e.id);
@@ -2294,7 +2300,7 @@ function ProgressScreen({ config, index, loadSession, onOpen }) {
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [exId, index.length]);
+  }, [exId, index.length, range]);
 
   const openFromChart = (state) => {
     if (state && state.activePayload && state.activePayload[0]) {
@@ -2324,6 +2330,20 @@ function ProgressScreen({ config, index, loadSession, onOpen }) {
         ))}
       </select>
 
+      {gymEntries.length > 0 && (
+        <div className="flex rounded-xl bg-zinc-950 p-1">
+          {PROGRESS_RANGES.map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setRange(key)}
+              className={`h-9 flex-1 rounded-lg text-xs font-semibold ${TRANS} ${range === key ? "bg-zinc-700 text-zinc-100" : "text-zinc-500"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {gymEntries.length === 0 ? (
         <EmptyState
           icon={<TrendingUp size={32} />}
@@ -2335,8 +2355,8 @@ function ProgressScreen({ config, index, loadSession, onOpen }) {
       ) : points.length < 2 ? (
         <EmptyState
           icon={<TrendingUp size={32} />}
-          title={points.length === 0 ? "No data for this exercise" : "One session logged"}
-          hint={points.length === 0 ? "Log this exercise in a workout to start its chart." : "Log it once more and the trend line appears."}
+          title={points.length === 0 ? (range === "all" ? "No data for this exercise" : "Nothing in this range") : "One session logged"}
+          hint={points.length === 0 ? (range === "all" ? "Log this exercise in a workout to start its chart." : "Widen the range to see older sessions.") : "Log it once more and the trend line appears."}
         />
       ) : (
         <div className="flex flex-col gap-3">
