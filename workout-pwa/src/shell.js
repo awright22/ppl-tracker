@@ -201,6 +201,7 @@ function exportBackup() {
 
 function importBackup(text) {
   const parsed = JSON.parse(text);
+  if (parsed && parsed.history && typeof parsed.history === "object") return importHistoryMerge(parsed.history);
   const data = parsed && parsed.data;
   if (!data || typeof data !== "object") throw new Error("Not a PPL tracker backup");
   let n = 0;
@@ -211,6 +212,87 @@ function importBackup(text) {
     n++;
   }
   return n;
+}
+
+/* History-merge import: a `{ history: { sessions, index } }` payload (e.g. the
+   old-app converter) is ADDED to this device's data instead of replacing it.
+   Older builds reject these payloads (no `data` key), which is the safe failure.
+   After the union, records and PR flags are replayed over the combined
+   timeline so badges mean "all-time PR", not "PR since this app existed".
+   These two mirror setEffectiveReps / epleyE1rm in the tracker component. */
+const effReps = (set, unilateral) =>
+  unilateral ? Math.min(Number(set.repsL) || 0, Number(set.repsR) || 0) : Number(set.reps) || 0;
+const epley = (w, r) => (Number(w) > 0 && Number(r) > 0 ? Math.round(Number(w) * (1 + Number(r) / 30)) : 0);
+
+function importHistoryMerge(hist) {
+  const sessions = hist.sessions && typeof hist.sessions === "object" ? hist.sessions : {};
+  const ids = Object.keys(sessions);
+  const incoming = Array.isArray(hist.index) ? hist.index.filter((e) => e && e.id) : [];
+  if (!ids.length || !incoming.length) throw new Error("History payload has no sessions");
+  for (const id of ids) {
+    localStorage.setItem(PREFIX + "session:" + id, JSON.stringify(sessions[id]));
+    markDirty("session:" + id);
+  }
+
+  const local = readJson(PREFIX + "sessions-index", []);
+  const kept = Array.isArray(local) ? local.filter((e) => e && e.id) : [];
+  const have = new Set(kept.map((e) => e.id)); // existing entries win a collision (re-import stays idempotent)
+  const merged = kept.concat(incoming.filter((e) => !have.has(e.id)));
+  merged.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+
+  // Replay oldest -> newest. Gym sessions only, same rules as finishWorkout:
+  // first-ever entries seed silently, improvements of >0.01 flag a PR.
+  const recs = {};
+  for (let i = merged.length - 1; i >= 0; i--) {
+    const entry = merged[i];
+    const raw = localStorage.getItem(PREFIX + "session:" + entry.id);
+    if (!raw) continue;
+    let s;
+    try { s = JSON.parse(raw); } catch (e) { continue; }
+    if (!s || s.mode !== "gym") continue;
+    let anyPr = false, changed = false;
+    for (const ex of s.exercises || []) {
+      let topW = 0, bestE1 = 0;
+      for (const st of ex.sets || []) {
+        const w = Number(st.weight) || 0;
+        if (w > topW) topW = w;
+        const e1 = epley(w, effReps(st, !!ex.unilateral));
+        if (e1 > bestE1) bestE1 = e1;
+      }
+      if (topW <= 0) continue;
+      const rec = recs[ex.exerciseId];
+      const isPr = !!rec && (topW > rec.weight + 0.01 || bestE1 > rec.e1rm + 0.01);
+      if (isPr !== !!ex.pr) { if (isPr) ex.pr = true; else delete ex.pr; changed = true; }
+      if (isPr) anyPr = true;
+      if (!rec || topW > rec.weight || bestE1 > rec.e1rm) {
+        recs[ex.exerciseId] = { weight: Math.max(topW, rec ? rec.weight : 0), e1rm: Math.max(bestE1, rec ? rec.e1rm : 0), date: s.date };
+      }
+    }
+    if (changed) { localStorage.setItem(PREFIX + "session:" + entry.id, JSON.stringify(s)); markDirty("session:" + entry.id); }
+    if (anyPr) entry.pr = true; else delete entry.pr;
+  }
+
+  // Records never shrink: keep any existing best the replay can no longer see
+  // (e.g. from a session that was later deleted).
+  const prevRecs = readJson(PREFIX + "records", {});
+  if (prevRecs && typeof prevRecs === "object") {
+    for (const k of Object.keys(prevRecs)) {
+      const p = prevRecs[k], r = recs[k];
+      if (!p) continue;
+      if (!r) { recs[k] = p; continue; }
+      recs[k] = {
+        weight: Math.max(Number(r.weight) || 0, Number(p.weight) || 0),
+        e1rm: Math.max(Number(r.e1rm) || 0, Number(p.e1rm) || 0),
+        date: (Number(p.weight) || 0) > (Number(r.weight) || 0) ? p.date : r.date,
+      };
+    }
+  }
+
+  localStorage.setItem(PREFIX + "sessions-index", JSON.stringify(merged));
+  markDirty("sessions-index");
+  localStorage.setItem(PREFIX + "records", JSON.stringify(recs));
+  markDirty("records");
+  return ids.length;
 }
 
 /* ---------- sync strip + panel UI ---------- */
@@ -369,7 +451,7 @@ function buildPanel() {
     }
     try {
       const n = importBackup(ta.value);
-      setStatus(`Imported ${n} records — reloading…`);
+      setStatus(`Imported ${n} — reloading…`);
       setTimeout(() => location.reload(), 600);
     } catch (e) { setStatus("Import failed: " + (e.message || e), true); }
   };
