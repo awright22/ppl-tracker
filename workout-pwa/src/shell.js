@@ -444,9 +444,11 @@ function buildPanel() {
     if (!importArmed) {
       ta.classList.remove("hidden");
       ta.value = "";
-      ta.placeholder = "Paste a backup here, then tap Import again";
+      ta.placeholder = "Paste a backup here, then tap the green Import button";
       importArmed = true;
       impBtn.textContent = "Import pasted";
+      // Armed = the real CTA now: restyle like the primary Save button.
+      impBtn.className = saveBtn.className;
       return;
     }
     try {
