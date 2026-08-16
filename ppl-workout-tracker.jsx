@@ -1296,8 +1296,13 @@ function TabBar({ tab, setTab, hasDraft }) {
 
 /* ---------- home ---------- */
 
+const NEXT_IN_ROTATION = { push: "pull", pull: "legs", legs: "push" };
+
 function HomeScreen({ index, mode, setMode, onStart, starting, qlPrompt, answerQl, justFinished, dismissJustFinished, pushToast }) {
   const [armedDay, setArmedDay] = useState(null);
+  // PPL rotation: whatever came after the most recent workout (any mode —
+  // a travel day advances the split just like a gym day).
+  const nextDay = index.length > 0 ? NEXT_IN_ROTATION[index[0].dayType] || "push" : "push";
   useEffect(() => {
     if (!armedDay) return undefined;
     const t = setTimeout(() => setArmedDay(null), 2600);
@@ -1391,7 +1396,12 @@ function HomeScreen({ index, mode, setMode, onStart, starting, qlPrompt, answerQ
             >
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="text-2xl font-bold">{DAY_LABEL[day]}</div>
+                  <div className="flex items-center gap-2">
+                    <div className="text-2xl font-bold">{DAY_LABEL[day]}</div>
+                    {day === nextDay && (
+                      <span className="rounded bg-lime-400 px-1.5 text-xs font-bold text-black">Up next</span>
+                    )}
+                  </div>
                   <div className="mt-1 text-xs text-zinc-500">
                     {last ? `${daysAgo(last.date)} · ${last.headline || `${last.setCount} sets`}` : "Never logged — start here"}
                   </div>
@@ -2284,7 +2294,9 @@ function ProgressScreen({ config, index, loadSession, onOpen }) {
       setPoints(null);
       const days = PROGRESS_RANGE_DAYS[range];
       const cutoff = days ? new Date(Date.now() - days * 86400000).toISOString() : null;
-      const entries = gymEntries.filter((e) => !cutoff || e.date >= cutoff).sort(byDateAsc).slice(-240);
+      // Scan every in-range session; the safety cap applies to THIS exercise's
+      // points, so busy other-day history can't shorten a lift's timeline.
+      const entries = gymEntries.filter((e) => !cutoff || e.date >= cutoff).sort(byDateAsc);
       const pts = [];
       for (const e of entries) {
         const s = await loadSession(e.id);
@@ -2296,7 +2308,7 @@ function ProgressScreen({ config, index, loadSession, onOpen }) {
         const e1rm = Math.max(...ex.sets.map((st) => epleyE1rm(Number(st.weight) || 0, setEffectiveReps(st, !!ex.unilateral))));
         pts.push({ id: s.id, label: shortDate(s.date), weight, volume, e1rm });
       }
-      if (alive) setPoints(pts);
+      if (alive) setPoints(pts.slice(-240));
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
