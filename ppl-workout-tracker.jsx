@@ -2589,45 +2589,6 @@ function weightDelta(list) {
   return { diff: round2(latest.weight - baseline.weight), baseline, sinceStart: !old };
 }
 
-// Scale-granularity stepper: coarse ±1 outside, fine ±0.1 inside, tap-to-type
-// in the middle — one value row instead of two stacked steppers.
-function WeighStepper({ value, onChange }) {
-  const [editing, setEditing] = useState(false);
-  const [txt, setTxt] = useState("");
-  const clamp = (n) => Math.min(999, Math.max(1, round2(n)));
-  const commit = () => {
-    setEditing(false);
-    const n = parseFloat(txt.replace(",", "."));
-    if (!Number.isNaN(n)) onChange(clamp(n));
-  };
-  const bump = (d) => onChange(clamp((Number(value) || 0) + d));
-  const btn = `h-12 w-12 shrink-0 rounded-xl bg-zinc-800 text-sm font-bold tabular-nums text-zinc-200 flex items-center justify-center active:bg-zinc-700 ${TRANS}`;
-  return (
-    <div className="flex items-center justify-center gap-1">
-      <button aria-label="decrease 1 lb" className={btn} onClick={() => bump(-1)}>−1</button>
-      <button aria-label="decrease 0.1 lb" className={btn} onClick={() => bump(-0.1)}>−.1</button>
-      {editing ? (
-        <input
-          autoFocus
-          inputMode="decimal"
-          value={txt}
-          onChange={(e) => setTxt(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => { if (e.key === "Enter") commit(); }}
-          className="h-12 w-20 rounded-xl border border-lime-400 bg-zinc-950 text-center text-lg font-bold text-zinc-50 outline-none"
-        />
-      ) : (
-        <button onClick={() => { setTxt(String(value ?? "")); setEditing(true); }} className="h-12 w-20 text-center">
-          <span className="text-2xl font-bold tabular-nums text-zinc-50">{fmtW(value)}</span>
-          <span className="ml-1 text-xs text-zinc-500">lb</span>
-        </button>
-      )}
-      <button aria-label="increase 0.1 lb" className={btn} onClick={() => bump(0.1)}>+.1</button>
-      <button aria-label="increase 1 lb" className={btn} onClick={() => bump(1)}>+1</button>
-    </div>
-  );
-}
-
 function WeightScreen({ config, weights, onLog, onDelete }) {
   const T = THEMES[config && config.ui && config.ui.theme === "dark" ? "dark" : "paper"];
   const chartTokens = { grid: T.chartGrid, tick: T.chartTick, surface: T.card, cursor: T.line2 };
@@ -2673,7 +2634,9 @@ function WeightScreen({ config, weights, onLog, onDelete }) {
             className="h-11 rounded-xl border border-zinc-700 bg-zinc-950 px-3 text-sm text-zinc-200 outline-none"
           />
         </div>
-        <WeighStepper value={val} onChange={setVal} />
+        <div className="flex justify-center">
+          <Stepper value={val} onChange={setVal} step={0.1} min={1} max={999} unit="lb" />
+        </div>
         <button
           onClick={submit}
           className={`h-12 w-full rounded-xl bg-lime-400 text-sm font-bold text-black active:bg-lime-300 ${TRANS}`}
