@@ -2651,7 +2651,7 @@ function WeightScreen({ config, weights, onLog, onDelete }) {
         <EmptyState
           icon={<Scale size={32} />}
           title="No weigh-ins yet"
-          hint="Log your first one above — the trend line starts at two."
+          hint="Log your first one above and the chart starts right here."
         />
       ) : (
         <>
@@ -2675,21 +2675,19 @@ function WeightScreen({ config, weights, onLog, onDelete }) {
             </div>
           </div>
 
-          {weights.length > 1 && (
-            <div className="flex rounded-xl bg-zinc-950 p-1">
-              {PROGRESS_RANGES.map(([key, label]) => (
-                <button
-                  key={key}
-                  onClick={() => setRange(key)}
-                  className={`h-9 flex-1 rounded-lg text-xs font-semibold ${TRANS} ${range === key ? "bg-zinc-700 text-zinc-100" : "text-zinc-500"}`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          )}
+          <div className="flex rounded-xl bg-zinc-950 p-1">
+            {PROGRESS_RANGES.map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setRange(key)}
+                className={`h-9 flex-1 rounded-lg text-xs font-semibold ${TRANS} ${range === key ? "bg-zinc-700 text-zinc-100" : "text-zinc-500"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
 
-          {points.length >= 2 ? (
+          {points.length > 0 ? (
             <ChartCard
               title="Bodyweight (lb)"
               data={points}
@@ -2699,13 +2697,13 @@ function WeightScreen({ config, weights, onLog, onDelete }) {
               unit="lb"
               height={224}
             />
-          ) : weights.length > 1 ? (
+          ) : (
             <EmptyState
               icon={<Scale size={32} />}
-              title={points.length === 0 ? "Nothing in this range" : "Not enough in this range"}
+              title="Nothing in this range"
               hint="Widen the range to see older weigh-ins."
             />
-          ) : null}
+          )}
 
           <div className="flex flex-col divide-y divide-zinc-800 rounded-2xl border border-zinc-800 bg-zinc-900 px-4">
             {rows.map((e) => (
