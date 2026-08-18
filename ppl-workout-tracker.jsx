@@ -6,13 +6,14 @@ import {
   Dumbbell, History as HistoryIcon, TrendingUp, Settings as SettingsIcon,
   Plus, Minus, X, Check, ChevronLeft, ChevronDown, ChevronUp, MoreVertical,
   Trash2, Pencil, Ban, RotateCcw, AlertTriangle, Loader2, ArrowUp, ArrowDown,
-  Heart, Flame, ChevronRight, Shield,
+  Heart, Flame, ChevronRight, Shield, Scale,
 } from "lucide-react";
 
 /* ============================================================
    PPL Workout Tracker — single-file Claude artifact
    Storage: window.storage (async KV) with in-memory fallback.
-   Keys: "config", "sessions-index", "session:{id}", "draft"
+   Keys: "config", "sessions-index", "session:{id}", "draft",
+         "records", "weights"
    ============================================================ */
 
 /* ---------- storage adapter ---------- */
@@ -646,6 +647,7 @@ export default function App() {
   const [phase, setPhase] = useState("loading");
   const [config, setConfig] = useState(null);
   const [index, setIndex] = useState([]);
+  const [weights, setWeights] = useState([]); // body-weight log, newest first
   const [draft, setDraftState] = useState(null);
   const [tab, setTab] = useState("workout");
   const [homeMode, setHomeMode] = useState("gym");
@@ -766,14 +768,20 @@ export default function App() {
   useEffect(() => {
     let alive = true;
     (async () => {
-      const [cfg, idx, dr, recs] = await Promise.all([
+      const [cfg, idx, dr, recs, wts] = await Promise.all([
         store.get("config"),
         store.get("sessions-index"),
         store.get("draft"),
         store.get("records"),
+        store.get("weights"),
       ]);
       if (!alive) return;
       recordsRef.current = recs && typeof recs === "object" ? recs : {};
+      setWeights(
+        Array.isArray(wts)
+          ? wts.filter((e) => e && e.id && e.date && Number(e.weight) > 0).sort(byDateDesc)
+          : []
+      );
       let c = cfg;
       if (!c || !c.days || !c.calisthenics) {
         c = SEED_CONFIG;
@@ -1141,6 +1149,41 @@ export default function App() {
     persist("config", next, "settings");
   }, [persist]);
 
+  /* --- body-weight log --- */
+  // One entry per calendar day (the id IS the local day), so re-logging a day updates it.
+  const logWeight = useCallback((dayStr, value) => {
+    const w = round2(Number(value) || 0);
+    if (!(w > 0) || !/^\d{4}-\d{2}-\d{2}$/.test(dayStr)) return;
+    const id = weightIdForDay(dayStr);
+    const existed = weights.some((e) => e.id === id);
+    const entry = { id, date: weighInIso(dayStr), weight: w };
+    const next = [entry, ...weights.filter((e) => e.id !== id)].sort(byDateDesc);
+    setWeights(next);
+    persist("weights", next, "weigh-in");
+    pushToast(existed ? `Updated ${shortDate(entry.date)} — ${fmtW(w)} lb` : `Logged ${fmtW(w)} lb`, { tone: "success" });
+  }, [persist, pushToast, weights]);
+
+  const deleteWeight = useCallback((id) => {
+    const entry = weights.find((e) => e.id === id);
+    if (!entry) return;
+    const next = weights.filter((e) => e.id !== id);
+    setWeights(next);
+    persist("weights", next, "weigh-ins");
+    pushToast("Weigh-in deleted", {
+      ttl: 7000,
+      action: {
+        label: "Undo",
+        fn: () => {
+          setWeights((prev) => {
+            const restored = [entry, ...prev.filter((e) => e.id !== id)].sort(byDateDesc);
+            persist("weights", restored, "weigh-ins");
+            return restored;
+          });
+        },
+      },
+    });
+  }, [persist, pushToast, weights]);
+
   /* --- theme --- */
   const themeKey = config && config.ui && config.ui.theme === "dark" ? "dark" : "paper";
   const activeTheme = THEMES[themeKey];
@@ -1201,7 +1244,10 @@ export default function App() {
           <HistoryScreen index={index} onOpen={(id) => setViewer({ id })} />
         )}
         {tab === "progress" && (
-          <ProgressScreen config={config} index={index} loadSession={loadSession} onOpen={(id) => setViewer({ id })} />
+          <ProgressScreen config={config} index={index} weights={weights} loadSession={loadSession} onOpen={(id) => setViewer({ id })} />
+        )}
+        {tab === "weight" && (
+          <WeightScreen config={config} weights={weights} onLog={logWeight} onDelete={deleteWeight} />
         )}
         {tab === "settings" && (
           <SettingsScreen config={config} saveConfig={saveConfig} themeKey={themeKey} />
@@ -1265,6 +1311,7 @@ function TabBar({ tab, setTab, hasDraft }) {
     { key: "workout", label: "Workout", icon: Dumbbell },
     { key: "history", label: "History", icon: HistoryIcon },
     { key: "progress", label: "Progress", icon: TrendingUp },
+    { key: "weight", label: "Weight", icon: Scale },
     { key: "settings", label: "Settings", icon: SettingsIcon },
   ];
   return (
@@ -2269,8 +2316,9 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, onR
 
 const PROGRESS_RANGES = [["3m", "3M"], ["6m", "6M"], ["all", "All"]];
 const PROGRESS_RANGE_DAYS = { "3m": 91, "6m": 183, all: null };
+const BODYWEIGHT_ID = "__bodyweight"; // pseudo-exercise: charts the Weight tab's log
 
-function ProgressScreen({ config, index, loadSession, onOpen }) {
+function ProgressScreen({ config, index, weights, loadSession, onOpen }) {
   const T = THEMES[config && config.ui && config.ui.theme === "dark" ? "dark" : "paper"];
   const chartTokens = { grid: T.chartGrid, tick: T.chartTick, surface: T.card, cursor: T.line2 };
   const gymEntries = index.filter((e) => e.mode === "gym");
@@ -2286,6 +2334,7 @@ function ProgressScreen({ config, index, loadSession, onOpen }) {
   const [points, setPoints] = useState(null); // null = loading
   const [metric, setMetric] = useState("e1rm"); // second chart: "e1rm" | "volume"
   const [range, setRange] = useState("all"); // "3m" | "6m" | "all"
+  const isBw = exId === BODYWEIGHT_ID;
   const exCfg = findConfigEx(config, exId);
 
   useEffect(() => {
@@ -2294,6 +2343,14 @@ function ProgressScreen({ config, index, loadSession, onOpen }) {
       setPoints(null);
       const days = PROGRESS_RANGE_DAYS[range];
       const cutoff = days ? new Date(Date.now() - days * 86400000).toISOString() : null;
+      if (exId === BODYWEIGHT_ID) {
+        const pts = [...weights]
+          .sort(byDateAsc)
+          .filter((e) => !cutoff || e.date >= cutoff)
+          .map((e) => ({ label: shortDate(e.date), weight: e.weight }));
+        if (alive) setPoints(pts.slice(-240));
+        return;
+      }
       // Scan every in-range session; the safety cap applies to THIS exercise's
       // points, so busy other-day history can't shorten a lift's timeline.
       const entries = gymEntries.filter((e) => !cutoff || e.date >= cutoff).sort(byDateAsc);
@@ -2312,7 +2369,7 @@ function ProgressScreen({ config, index, loadSession, onOpen }) {
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [exId, index.length, range]);
+  }, [exId, index.length, range, weights]);
 
   const openFromChart = (state) => {
     if (state && state.activePayload && state.activePayload[0]) {
@@ -2325,7 +2382,9 @@ function ProgressScreen({ config, index, loadSession, onOpen }) {
     <div className="flex flex-col gap-4">
       <header className="pt-2">
         <h1 className="text-2xl font-bold">Progress</h1>
-        <div className="text-xs text-zinc-500">Gym sessions only — bodyweight work doesn't move these lines</div>
+        <div className="text-xs text-zinc-500">
+          {isBw ? "Body weight, logged from the Weight tab" : "Gym sessions only — bodyweight work doesn't move these lines"}
+        </div>
       </header>
 
       <select
@@ -2340,9 +2399,12 @@ function ProgressScreen({ config, index, loadSession, onOpen }) {
             ))}
           </optgroup>
         ))}
+        <optgroup label="Body">
+          <option value={BODYWEIGHT_ID}>Bodyweight</option>
+        </optgroup>
       </select>
 
-      {gymEntries.length > 0 && (
+      {(isBw ? weights.length > 0 : gymEntries.length > 0) && (
         <div className="flex rounded-xl bg-zinc-950 p-1">
           {PROGRESS_RANGES.map(([key, label]) => (
             <button
@@ -2356,7 +2418,33 @@ function ProgressScreen({ config, index, loadSession, onOpen }) {
         </div>
       )}
 
-      {gymEntries.length === 0 ? (
+      {isBw ? (
+        weights.length === 0 ? (
+          <EmptyState
+            icon={<Scale size={32} />}
+            title="No weigh-ins yet"
+            hint="Log your weight in the Weight tab and the trend charts here."
+          />
+        ) : points === null ? (
+          <Spinner label="Crunching weigh-ins…" />
+        ) : points.length < 2 ? (
+          <EmptyState
+            icon={<Scale size={32} />}
+            title={points.length === 0 ? "Nothing in this range" : "One weigh-in logged"}
+            hint={points.length === 0 ? "Widen the range to see older weigh-ins." : "Log it once more and the trend line appears."}
+          />
+        ) : (
+          <ChartCard
+            title="Bodyweight (lb)"
+            data={points}
+            dataKey="weight"
+            color={T.chartLine}
+            chart={chartTokens}
+            unit="lb"
+            height={224}
+          />
+        )
+      ) : gymEntries.length === 0 ? (
         <EmptyState
           icon={<TrendingUp size={32} />}
           title="No gym sessions yet"
@@ -2422,7 +2510,7 @@ function ChartTip({ active, payload, label, unit }) {
   );
 }
 
-function ChartCard({ title, sub, headerRight, data, dataKey, color, height, onClick, chart }) {
+function ChartCard({ title, sub, headerRight, data, dataKey, color, height, onClick, chart, unit }) {
   const C = {
     grid: (chart && chart.grid) || CHART.grid,
     tick: (chart && chart.tick) || CHART.tick,
@@ -2457,7 +2545,7 @@ function ChartCard({ title, sub, headerRight, data, dataKey, color, height, onCl
             axisLine={false}
             tickCount={5}
           />
-          <Tooltip content={<ChartTip />} cursor={{ stroke: C.cursor, strokeWidth: 1 }} />
+          <Tooltip content={<ChartTip unit={unit} />} cursor={{ stroke: C.cursor, strokeWidth: 1 }} />
           <Line
             type="monotone"
             dataKey={dataKey}
@@ -2470,6 +2558,179 @@ function ChartCard({ title, sub, headerRight, data, dataKey, color, height, onCl
           />
         </LineChart>
       </ResponsiveContainer>
+    </div>
+  );
+}
+
+/* ---------- weight (body-weight tracking) ---------- */
+
+// Local-date "YYYY-MM-DD" for <input type="date"> (toISOString would use the UTC day).
+const dateInputVal = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+const weightIdForDay = (dayStr) => `w-${dayStr.replace(/-/g, "")}`;
+
+// Today logs at the current time; backfilled days at local noon, so the stored
+// ISO date can't drift into a neighboring calendar day in any timezone.
+function weighInIso(dayStr) {
+  const now = new Date();
+  if (dayStr === dateInputVal(now)) return now.toISOString();
+  const p = dayStr.split("-").map(Number);
+  return new Date(p[0], p[1] - 1, p[2], 12, 0, 0).toISOString();
+}
+
+// list is newest-first. Baseline = newest weigh-in at least 30 days older than
+// the latest; while history is shorter than that, the oldest entry stands in.
+function weightDelta(list) {
+  if (!Array.isArray(list) || list.length < 2) return null;
+  const latest = list[0];
+  const cutoff = new Date(new Date(latest.date).getTime() - 30 * 86400000).toISOString();
+  const old = list.find((e) => e.date <= cutoff);
+  const baseline = old || list[list.length - 1];
+  return { diff: round2(latest.weight - baseline.weight), baseline, sinceStart: !old };
+}
+
+function WeightScreen({ config, weights, onLog, onDelete }) {
+  const T = THEMES[config && config.ui && config.ui.theme === "dark" ? "dark" : "paper"];
+  const chartTokens = { grid: T.chartGrid, tick: T.chartTick, surface: T.card, cursor: T.line2 };
+  const todayStr = dateInputVal(new Date());
+  const last = weights[0] || null;
+  const [val, setVal] = useState(last ? last.weight : 180);
+  const [dayStr, setDayStr] = useState(todayStr);
+  const [range, setRange] = useState("3m");
+  const [showAll, setShowAll] = useState(false);
+
+  const editingExisting = weights.some((e) => e.id === weightIdForDay(dayStr));
+  const submit = () => {
+    if (!(Number(val) > 0)) return;
+    onLog(dayStr, val);
+    setDayStr(todayStr);
+  };
+
+  const days = PROGRESS_RANGE_DAYS[range];
+  const cutoff = days ? new Date(Date.now() - days * 86400000).toISOString() : null;
+  const points = [...weights]
+    .sort(byDateAsc)
+    .filter((e) => !cutoff || e.date >= cutoff)
+    .map((e) => ({ label: shortDate(e.date), weight: e.weight }))
+    .slice(-240);
+  const delta = weightDelta(weights);
+  const rows = showAll ? weights : weights.slice(0, 8);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <header className="pt-2">
+        <h1 className="text-2xl font-bold">Weight</h1>
+        <div className="text-xs text-zinc-500">Log it whenever you step on the scale — one entry per day</div>
+      </header>
+
+      <div className="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-sm font-semibold text-zinc-100">Log a weigh-in</div>
+          <input
+            type="date"
+            value={dayStr}
+            max={todayStr}
+            onChange={(e) => { if (e.target.value) setDayStr(e.target.value); }}
+            className="h-11 rounded-xl border border-zinc-700 bg-zinc-950 px-3 text-sm text-zinc-200 outline-none"
+          />
+        </div>
+        <div className="flex justify-center">
+          <Stepper value={val} onChange={setVal} step={0.5} min={1} max={999} unit="lb" />
+        </div>
+        <button
+          onClick={submit}
+          className={`h-12 w-full rounded-xl bg-lime-400 text-sm font-bold text-black active:bg-lime-300 ${TRANS}`}
+        >
+          {editingExisting
+            ? `Update ${dayStr === todayStr ? "today" : shortDate(weighInIso(dayStr))} — ${fmtW(val)} lb`
+            : `Log ${fmtW(val)} lb`}
+        </button>
+      </div>
+
+      {weights.length === 0 ? (
+        <EmptyState
+          icon={<Scale size={32} />}
+          title="No weigh-ins yet"
+          hint="Log your first one above — the trend line starts at two."
+        />
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-3">
+              <div className="text-xs text-zinc-500">Current</div>
+              <div className="text-2xl font-bold tabular-nums text-zinc-50">
+                {fmtW(last.weight)} <span className="text-xs font-semibold text-zinc-500">lb</span>
+              </div>
+              <div className="text-xs text-zinc-500">{daysAgo(last.date)}</div>
+            </div>
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-3">
+              <div className="text-xs text-zinc-500">Change</div>
+              <div className="text-2xl font-bold tabular-nums text-zinc-50">
+                {delta ? `${delta.diff > 0 ? "+" : ""}${fmtW(delta.diff)}` : "—"}
+                {delta ? <span className="text-xs font-semibold text-zinc-500"> lb</span> : null}
+              </div>
+              <div className="text-xs text-zinc-500">
+                {delta ? (delta.sinceStart ? `since ${shortDate(delta.baseline.date)}` : "vs 30 days ago") : "needs two weigh-ins"}
+              </div>
+            </div>
+          </div>
+
+          {weights.length > 1 && (
+            <div className="flex rounded-xl bg-zinc-950 p-1">
+              {PROGRESS_RANGES.map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setRange(key)}
+                  className={`h-9 flex-1 rounded-lg text-xs font-semibold ${TRANS} ${range === key ? "bg-zinc-700 text-zinc-100" : "text-zinc-500"}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {points.length >= 2 ? (
+            <ChartCard
+              title="Bodyweight (lb)"
+              data={points}
+              dataKey="weight"
+              color={T.chartLine}
+              chart={chartTokens}
+              unit="lb"
+              height={224}
+            />
+          ) : weights.length > 1 ? (
+            <EmptyState
+              icon={<Scale size={32} />}
+              title={points.length === 0 ? "Nothing in this range" : "Not enough in this range"}
+              hint="Widen the range to see older weigh-ins."
+            />
+          ) : null}
+
+          <div className="flex flex-col divide-y divide-zinc-800 rounded-2xl border border-zinc-800 bg-zinc-900 px-4">
+            {rows.map((e) => (
+              <div key={e.id} className="flex h-14 items-center justify-between gap-2">
+                <div className="text-sm text-zinc-300">{fullDate(e.date)}</div>
+                <div className="flex items-center gap-1">
+                  <div className="text-base font-semibold tabular-nums text-zinc-100">{fmtW(e.weight)} lb</div>
+                  <button
+                    aria-label={`delete weigh-in ${shortDate(e.date)}`}
+                    onClick={() => onDelete(e.id)}
+                    className={`flex h-11 w-11 items-center justify-center rounded-lg text-zinc-600 active:bg-zinc-800 active:text-red-400 ${TRANS}`}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+          {weights.length > rows.length && (
+            <button onClick={() => setShowAll(true)} className={`h-11 rounded-xl text-xs font-semibold text-zinc-500 active:text-zinc-300 ${TRANS}`}>
+              Show all {weights.length} weigh-ins
+            </button>
+          )}
+        </>
+      )}
     </div>
   );
 }

@@ -1,8 +1,8 @@
 # PPL Tracker
 
-A personal Push / Pull / Legs workout tracker, installable on iPhone as a PWA,
-with an optional Google Sheets backend for backup/sync and an Apple Health
-logging flow via the iOS Shortcuts app.
+A personal Push / Pull / Legs workout tracker with body-weight logging,
+installable on iPhone as a PWA, with an optional Google Sheets backend for
+backup/sync and an Apple Health logging flow via the iOS Shortcuts app.
 
 **Live app:** https://awright22.github.io/ppl-tracker/ (served from `docs/` by GitHub Pages)
 

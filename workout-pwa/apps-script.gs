@@ -12,10 +12,10 @@
  *     and paste URL + token into the tracker's sync panel (the ☁︎ strip).
  *
  * Storage model: a `kv` tab mirrors the app's key-value records
- * (config, sessions-index, session:<id>) — that's what restore uses.
- * `Sessions` and `Sets` tabs are rebuilt on every push as a readable,
- * pivot-table-friendly view. Don't hand-edit kv; the readable tabs are
- * regenerated, so edit workouts in the app, not the sheet.
+ * (config, sessions-index, records, weights, session:<id>) — that's what
+ * restore uses. `Sessions`, `Sets`, and `Weight` tabs are rebuilt on every
+ * push as a readable, pivot-table-friendly view. Don't hand-edit kv; the
+ * readable tabs are regenerated, so edit data in the app, not the sheet.
  */
 
 var TOKEN = "CHANGE_ME";
@@ -79,8 +79,10 @@ function upsert(kv, rows) {
 function rebuildReadable(ss, kv) {
   var values = kv.getDataRange().getValues();
   var sessions = [];
+  var weightsJson = "";
   for (var i = 1; i < values.length; i++) {
     var key = String(values[i][0]);
+    if (key === "weights" && values[i][1] !== "") { weightsJson = String(values[i][1]); continue; }
     if (key.indexOf("session:") !== 0 || values[i][1] === "") continue;
     try { sessions.push(JSON.parse(values[i][1])); } catch (e) { /* skip corrupt row */ }
   }
@@ -110,6 +112,20 @@ function rebuildReadable(ss, kv) {
   });
   if (sRows.length) sTab.getRange(2, 1, sRows.length, sRows[0].length).setValues(sRows);
   if (setRows.length) setTab.getRange(2, 1, setRows.length, setRows[0].length).setValues(setRows);
+
+  var wTab = getTab(ss, "Weight", ["date", "weight"]);
+  clearBelowHeader(wTab);
+  var wRows = [];
+  if (weightsJson) {
+    try {
+      var entries = JSON.parse(weightsJson) || [];
+      entries.sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+      entries.forEach(function (e) {
+        if (e && e.date) wRows.push([e.date, e.weight == null ? "" : e.weight]);
+      });
+    } catch (e) { /* corrupt weights row — leave the tab empty */ }
+  }
+  if (wRows.length) wTab.getRange(2, 1, wRows.length, wRows[0].length).setValues(wRows);
 }
 
 function getTab(ss, name, headers) {
