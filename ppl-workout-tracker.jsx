@@ -1399,6 +1399,44 @@ function TabBar({ tab, setTab, hasDraft }) {
 
 const NEXT_IN_ROTATION = { push: "pull", pull: "legs", legs: "push" };
 
+/* "Run okay" chip (exported for tests). Suggest a run today only when ALL hold:
+   1. legs isn't up next (a run today shouldn't land within a day of legs;
+      nextDay already ignores run entries),
+   2. fewer than RUN_WEEKLY_TARGET runs in the trailing 7 days,
+   3. no run yesterday or today (never two days in a row).
+   Staleness escalates the go-chip: >4 days since any run means skipping today
+   likely misses the weekly target (2 runs a day apart need the first by ~day 4);
+   7+ days (or never) flags the broken week outright. Staleness never overrides
+   the legs gate — the hold chip just notes that a run opens up after legs.
+   Precedence: legs-up-next > target hit > ran-recently (silent) > go. */
+const RUN_WEEKLY_TARGET = 2;
+export function runSuggestion(index, nextDay, now = new Date()) {
+  const runs = index.filter((e) => e.dayType === "run");
+  const lastRun = runs[0] || null; // index is newest-first
+  const daysSinceRun = lastRun ? (now.getTime() - new Date(lastRun.date).getTime()) / 86400000 : Infinity;
+  const stale = daysSinceRun > 4;
+  if (nextDay === "legs") {
+    return {
+      kind: "hold",
+      label: "No run — legs up next",
+      note: stale && lastRun ? `Been ${Math.floor(daysSinceRun)} days — a run opens up right after legs` : null,
+    };
+  }
+  const sevenAgoIso = new Date(now.getTime() - 7 * 86400000).toISOString();
+  const runs7 = runs.filter((e) => e.date >= sevenAgoIso).length;
+  if (runs7 >= RUN_WEEKLY_TARGET) return { kind: "done", label: "Runs done ✓" };
+  const today = dateInputVal(now);
+  const yesterday = dateInputVal(new Date(now.getTime() - 86400000));
+  const ranRecently = runs.some((e) => {
+    const k = dateInputVal(new Date(e.date));
+    return k === today || k === yesterday;
+  });
+  if (ranRecently) return null;
+  if (daysSinceRun >= 7) return { kind: "urgent", label: "No runs this week — run today" };
+  if (stale) return { kind: "urgent", label: `Run today — been ${Math.floor(daysSinceRun)} days` };
+  return { kind: "go", label: `Run today — ${runs7 + 1} of ${RUN_WEEKLY_TARGET} this week` };
+}
+
 function HomeScreen({ index, mode, setMode, onStart, starting, qlPrompt, answerQl, justFinished, dismissJustFinished, pushToast, onRun }) {
   const [armedDay, setArmedDay] = useState(null);
   // PPL rotation: whatever came after the most recent lift day (any mode —
@@ -1519,13 +1557,29 @@ function HomeScreen({ index, mode, setMode, onStart, starting, qlPrompt, answerQ
 
         {(() => {
           const lastRun = index.find((e) => e.dayType === "run");
+          const chip = runSuggestion(index, nextDay);
           return (
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
               <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-2xl font-bold">Run</div>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="text-2xl font-bold">Run</div>
+                    {chip && chip.kind === "go" && (
+                      <span className="rounded bg-lime-400 px-1.5 text-xs font-bold text-black">{chip.label}</span>
+                    )}
+                    {chip && chip.kind === "urgent" && (
+                      <span className="rounded border border-amber-400 px-1.5 py-0.5 text-xs font-bold text-amber-300">{chip.label}</span>
+                    )}
+                    {chip && (chip.kind === "done" || chip.kind === "hold") && (
+                      <span className={`rounded bg-zinc-800 px-1.5 py-0.5 text-xs font-semibold ${chip.kind === "done" ? "text-lime-300" : "text-zinc-400"}`}>
+                        {chip.label}
+                      </span>
+                    )}
+                  </div>
                   <div className="mt-1 text-xs text-zinc-500">
-                    {lastRun ? `${daysAgo(lastRun.date)} · ${lastRun.headline}` : "GPS-tracked or logged by hand — outside the lift rotation"}
+                    {chip && chip.note
+                      ? chip.note
+                      : lastRun ? `${daysAgo(lastRun.date)} · ${lastRun.headline}` : "GPS-tracked or logged by hand — outside the lift rotation"}
                   </div>
                 </div>
                 <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-lime-400 text-black">
