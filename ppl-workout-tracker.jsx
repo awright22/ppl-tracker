@@ -6,7 +6,7 @@ import {
   Dumbbell, History as HistoryIcon, TrendingUp, Settings as SettingsIcon,
   Plus, Minus, X, Check, ChevronLeft, ChevronDown, ChevronUp, MoreVertical,
   Trash2, Pencil, Ban, RotateCcw, AlertTriangle, Loader2, ArrowUp, ArrowDown,
-  Heart, Flame, ChevronRight, Shield, Scale,
+  Heart, Flame, ChevronRight, Shield, Scale, Footprints,
 } from "lucide-react";
 
 /* ============================================================
@@ -182,7 +182,7 @@ export const SEED_CONFIG = {
 /* ---------- constants & small utils ---------- */
 
 const DAY_KEYS = ["push", "pull", "legs"];
-const DAY_LABEL = { push: "Push", pull: "Pull", legs: "Legs" };
+const DAY_LABEL = { push: "Push", pull: "Pull", legs: "Legs", run: "Run" };
 const LOAD_LABEL = {
   "db-pair": "per DB", "db-single": "DB", stack: "stack",
   machine: "machine", "plate-loaded": "loaded", "bodyweight-plus": "BW +",
@@ -311,6 +311,19 @@ export function plateBreakdown(total) {
 function fmtClock(totalSec) {
   const s = Math.max(0, Math.round(totalSec));
   return `${Math.floor(s / 60)}:${pad2(s % 60)}`;
+}
+
+// Run durations: M:SS under an hour, H:MM:SS over.
+function fmtDur(totalSec) {
+  const s = Math.max(0, Math.round(totalSec));
+  if (s < 3600) return fmtClock(s);
+  return `${Math.floor(s / 3600)}:${pad2(Math.floor((s % 3600) / 60))}:${pad2(s % 60)}`;
+}
+
+function fmtPace(seconds, miles) {
+  if (!(Number(miles) > 0.05) || !(Number(seconds) > 0)) return "—";
+  const sp = Math.round(Number(seconds) / Number(miles));
+  return `${Math.floor(sp / 60)}:${pad2(sp % 60)}/mi`;
 }
 
 /* ---------- progression logic (exported for tests) ---------- */
@@ -654,6 +667,7 @@ export default function App() {
   const [toasts, setToasts] = useState([]);
   const [qlPrompt, setQlPrompt] = useState(null); // index entry awaiting QL answer
   const [viewer, setViewer] = useState(null); // { id } — full-screen session viewer
+  const [runOverlay, setRunOverlay] = useState(null); // null | "live" | "manual" — full-screen run tracker
   const [starting, setStarting] = useState(false);
   const [justFinished, setJustFinished] = useState(null); // last saved session, for the Health card
   const recordsRef = useRef({}); // { exerciseId: { weight, e1rm, date } } — all-time bests for PR flags
@@ -1149,6 +1163,41 @@ export default function App() {
     persist("config", next, "settings");
   }, [persist]);
 
+  /* --- running --- */
+  // Runs are ordinary sessions (dayType "run") so history, sync, and backup
+  // all just work; only the summary is stored — never the GPS trail.
+  const saveRun = useCallback(async ({ startIso, endIso, miles, seconds, splits, source }) => {
+    const startDate = new Date(startIso);
+    let id = makeSessionId(startDate);
+    for (let bump = 2; index.some((e) => e.id === id); bump += 1) id = `${makeSessionId(startDate)}-${bump}`;
+    const session = {
+      id, date: startIso, endDate: endIso, dayType: "run", mode: "run", exercises: [],
+      run: { miles, seconds, splits: splits && splits.length ? splits : undefined, source },
+    };
+    const ok = await store.set(`session:${id}`, session);
+    if (!ok) {
+      pushToast("Couldn't save the run", {
+        tone: "error",
+        action: { label: "Retry", fn: () => saveRun({ startIso, endIso, miles, seconds, splits, source }) },
+      });
+      return;
+    }
+    sessionCache.current.set(id, session);
+    const pace = fmtPace(seconds, miles);
+    const entry = {
+      id, date: startIso, dayType: "run", mode: "run",
+      headline: `${fmtW(miles)} mi · ${fmtDur(seconds)}${pace !== "—" ? ` · ${pace}` : ""}`,
+      setCount: 0,
+    };
+    setIndex((prev) => {
+      const next = [entry, ...prev.filter((e) => e.id !== id)].sort(byDateDesc);
+      persist("sessions-index", next, "history");
+      return next;
+    });
+    setRunOverlay(null);
+    pushToast(`Run saved — ${fmtW(miles)} mi in ${fmtDur(seconds)}`, { tone: "success" });
+  }, [index, persist, pushToast]);
+
   /* --- body-weight log --- */
   // One entry per calendar day (the id IS the local day), so re-logging a day updates it.
   const logWeight = useCallback((dayStr, value) => {
@@ -1237,6 +1286,7 @@ export default function App() {
               justFinished={justFinished}
               dismissJustFinished={() => setJustFinished(null)}
               pushToast={pushToast}
+              onRun={setRunOverlay}
             />
           )
         )}
@@ -1266,6 +1316,10 @@ export default function App() {
           hasDraft={!!draft}
           pushToast={pushToast}
         />
+      )}
+
+      {runOverlay && (
+        <RunOverlay mode={runOverlay} onSave={saveRun} onClose={() => setRunOverlay(null)} pushToast={pushToast} />
       )}
 
       <TabBar tab={tab} setTab={setTab} hasDraft={!!draft} />
@@ -1345,11 +1399,13 @@ function TabBar({ tab, setTab, hasDraft }) {
 
 const NEXT_IN_ROTATION = { push: "pull", pull: "legs", legs: "push" };
 
-function HomeScreen({ index, mode, setMode, onStart, starting, qlPrompt, answerQl, justFinished, dismissJustFinished, pushToast }) {
+function HomeScreen({ index, mode, setMode, onStart, starting, qlPrompt, answerQl, justFinished, dismissJustFinished, pushToast, onRun }) {
   const [armedDay, setArmedDay] = useState(null);
-  // PPL rotation: whatever came after the most recent workout (any mode —
-  // a travel day advances the split just like a gym day).
-  const nextDay = index.length > 0 ? NEXT_IN_ROTATION[index[0].dayType] || "push" : "push";
+  // PPL rotation: whatever came after the most recent lift day (any mode —
+  // a travel day advances the split just like a gym day). Runs sit outside
+  // the rotation and don't advance it.
+  const lastLift = index.find((e) => NEXT_IN_ROTATION[e.dayType]);
+  const nextDay = lastLift ? NEXT_IN_ROTATION[lastLift.dayType] : "push";
   useEffect(() => {
     if (!armedDay) return undefined;
     const t = setTimeout(() => setArmedDay(null), 2600);
@@ -1460,6 +1516,39 @@ function HomeScreen({ index, mode, setMode, onStart, starting, qlPrompt, answerQ
             </button>
           );
         })}
+
+        {(() => {
+          const lastRun = index.find((e) => e.dayType === "run");
+          return (
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-2xl font-bold">Run</div>
+                  <div className="mt-1 text-xs text-zinc-500">
+                    {lastRun ? `${daysAgo(lastRun.date)} · ${lastRun.headline}` : "GPS-tracked or logged by hand — outside the lift rotation"}
+                  </div>
+                </div>
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-lime-400 text-black">
+                  <Footprints size={22} />
+                </div>
+              </div>
+              <div className="mt-4 flex gap-2">
+                <button
+                  onClick={() => onRun("live")}
+                  className={`h-11 flex-1 rounded-xl bg-zinc-800 text-sm font-semibold text-lime-300 active:bg-zinc-700 ${TRANS}`}
+                >
+                  Start GPS run
+                </button>
+                <button
+                  onClick={() => onRun("manual")}
+                  className={`h-11 flex-1 rounded-xl bg-zinc-800 text-sm font-semibold text-zinc-200 active:bg-zinc-700 ${TRANS}`}
+                >
+                  Log manually
+                </button>
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {index.length === 0 && (
@@ -2032,7 +2121,9 @@ function HistoryScreen({ index, onOpen }) {
                   {e.ql === "same-or-better" && <span title="QL same or better" className="h-2 w-2 rounded-full bg-green-500" />}
                   {e.ql === "worse" && <span title="QL worse" className="h-2 w-2 rounded-full bg-red-500" />}
                 </div>
-                <div className="truncate text-xs text-zinc-500">{e.headline || "—"} · {e.setCount} sets</div>
+                <div className="truncate text-xs text-zinc-500">
+                  {e.dayType === "run" ? (e.headline || "—") : `${e.headline || "—"} · ${e.setCount} sets`}
+                </div>
               </div>
               <ChevronDown size={16} className="-rotate-90 shrink-0 text-zinc-600" />
             </button>
@@ -2154,7 +2245,7 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, onR
                 </>
               )}
             </div>
-            {s && !editing && (
+            {s && !editing && !s.run && (
               <button onClick={startEdit} className="flex h-11 items-center gap-1 rounded-xl bg-zinc-800 px-3 text-sm font-semibold text-zinc-200 active:bg-zinc-700">
                 <Pencil size={14} /> Edit
               </button>
@@ -2185,7 +2276,38 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, onR
                 Next-day QL check: {s.qlCheck === "worse" ? "worse" : "same or better"}
               </div>
             )}
-            {s.exercises.map((ex, ei) => {
+            {s.run && (
+              <>
+                <div className="grid grid-cols-3 gap-2">
+                  {[["Distance", `${fmtW(s.run.miles)} mi`], ["Time", fmtDur(s.run.seconds)], ["Pace", fmtPace(s.run.seconds, s.run.miles)]].map(([label, valTxt]) => (
+                    <div key={label} className="rounded-2xl border border-zinc-800 bg-zinc-900 p-3">
+                      <div className="text-xs text-zinc-500">{label}</div>
+                      <div className="mt-1 text-lg font-bold tabular-nums text-zinc-50">{valTxt}</div>
+                    </div>
+                  ))}
+                </div>
+                {s.run.splits && s.run.splits.length > 0 && (
+                  <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+                    <div className="text-sm font-semibold text-zinc-100">Mile splits</div>
+                    <div className="mt-2 flex flex-col divide-y divide-zinc-800 rounded-xl bg-zinc-950">
+                      {s.run.splits.map((sp, i) => (
+                        <div key={sp.mile} className="flex items-center gap-3 px-3 py-2">
+                          <div className="w-10 text-xs font-bold text-zinc-600">MI {sp.mile}</div>
+                          <div className="flex-1 text-base font-semibold tabular-nums text-zinc-100">
+                            {fmtDur(sp.seconds - (i > 0 ? s.run.splits[i - 1].seconds : 0))}
+                          </div>
+                          <div className="text-xs tabular-nums text-zinc-500">{fmtDur(sp.seconds)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="px-1 text-xs text-zinc-600">
+                  {s.run.source === "gps" ? "GPS-tracked — only distance and time were stored, never the route" : "Logged manually"}
+                </div>
+              </>
+            )}
+            {!s.run && (s.exercises || []).map((ex, ei) => {
               const cfg = findConfigEx(config, ex.exerciseId);
               const inc = (cfg && cfg.increment) || 5;
               return (
@@ -2281,7 +2403,7 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, onR
               );
             })()}
 
-            {!editing && (
+            {!editing && !s.run && (
               <button
                 onClick={() => { if (!hasDraft || armedReopen) onReopen(s); else setArmedReopen(true); }}
                 className={`flex h-12 items-center justify-center gap-2 rounded-2xl border text-sm font-semibold ${TRANS} ${
@@ -2293,7 +2415,7 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, onR
               </button>
             )}
 
-            {!editing && <HealthLogButton session={s} pushToast={pushToast} />}
+            {!editing && !s.run && <HealthLogButton session={s} pushToast={pushToast} />}
 
             {!editing && (
               <button
@@ -2558,6 +2680,328 @@ function ChartCard({ title, sub, headerRight, data, dataKey, color, height, onCl
           />
         </LineChart>
       </ResponsiveContainer>
+    </div>
+  );
+}
+
+/* ---------- running (GPS tracker + manual log) ---------- */
+
+const METERS_PER_MILE = 1609.344;
+
+export function haversineMeters(a, b) {
+  const R = 6371000;
+  const toRad = (x) => (x * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLon = toRad(b.lon - a.lon);
+  const h =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+/* Full-screen run tracker. GPS distance is anchor-based: a fix only counts
+   once you've moved past the jitter floor from the last credited point, so
+   standing at a stoplight doesn't accrue phantom distance, while slow
+   movement still accumulates correctly. Implausible jumps (>12 m/s) re-anchor
+   without credit. Timing is wall-clock, so it survives brief backgrounding —
+   distance across a gap is bridged as the straight line between fixes. */
+function RunOverlay({ mode, onSave, onClose, pushToast }) {
+  const [entryMode, setEntryMode] = useState(mode); // "live" | "manual" — denied GPS can fall back
+  const todayStr = dateInputVal(new Date());
+  const [dayStr, setDayStr] = useState(todayStr);
+  const [manMiles, setManMiles] = useState(3);
+  const [manMins, setManMins] = useState(30);
+  const [phase, setPhase] = useState("idle"); // idle | tracking | paused | denied
+  const [gpsNote, setGpsNote] = useState("");
+  const [acc, setAcc] = useState(null);
+  const [armedFinish, setArmedFinish] = useArmed(3600);
+  const [armedClose, setArmedClose] = useArmed();
+  const [saving, setSaving] = useState(false);
+  const t = useRef({ meters: 0, anchor: null, startedAt: 0, segStart: 0, accumMs: 0, splits: [] });
+  const watchId = useRef(null);
+  const phaseRef = useRef("idle");
+  phaseRef.current = phase;
+  const [, tick] = useState(0);
+
+  const elapsedMs = () => t.current.accumMs + (phaseRef.current === "tracking" ? Date.now() - t.current.segStart : 0);
+
+  useEffect(() => {
+    if (phase !== "tracking") return undefined;
+    const iv = setInterval(() => tick((n) => n + 1), 500);
+    return () => clearInterval(iv);
+  }, [phase]);
+
+  // Screen must stay on: iOS suspends browser GPS the moment the display sleeps.
+  const runningNow = phase === "tracking" || phase === "paused";
+  useEffect(() => {
+    if (!runningNow) return undefined;
+    let lock = null;
+    let released = false;
+    const acquire = async () => {
+      try {
+        if (navigator.wakeLock && document.visibilityState === "visible" && !released) {
+          lock = await navigator.wakeLock.request("screen");
+        }
+      } catch (e) { /* unsupported — user keeps the screen on themselves */ }
+    };
+    acquire();
+    const onVis = () => { if (document.visibilityState === "visible") acquire(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      released = true;
+      document.removeEventListener("visibilitychange", onVis);
+      try { if (lock) lock.release(); } catch (e) { /* already released */ }
+    };
+  }, [runningNow]);
+
+  useEffect(() => () => {
+    if (watchId.current != null && typeof navigator !== "undefined" && navigator.geolocation) {
+      navigator.geolocation.clearWatch(watchId.current);
+    }
+  }, []);
+
+  const onPos = (pos) => {
+    const c = pos.coords;
+    setAcc(Math.round(c.accuracy));
+    if (phaseRef.current !== "tracking") return;
+    if (c.accuracy > 40) { setGpsNote("GPS is fuzzy — distance pauses until the signal sharpens"); return; }
+    setGpsNote("");
+    const s = t.current;
+    const here = { lat: c.latitude, lon: c.longitude, t: pos.timestamp || Date.now() };
+    if (!s.anchor) { s.anchor = here; return; }
+    const d = haversineMeters(s.anchor, here);
+    const dt = Math.max(0.3, (here.t - s.anchor.t) / 1000);
+    if (d / dt > 12) { s.anchor = here; return; } // implausible jump — re-anchor, no credit
+    if (d < Math.max(3, c.accuracy / 2)) return; // jitter floor — hold the anchor
+    s.meters += d;
+    s.anchor = here;
+    while (Math.floor(s.meters / METERS_PER_MILE) > s.splits.length) {
+      s.splits.push({ mile: s.splits.length + 1, seconds: Math.round(elapsedMs() / 1000) });
+    }
+    tick((n) => n + 1);
+  };
+
+  const onGpsErr = (err) => {
+    if (err && err.code === 1) {
+      setPhase("denied");
+      if (watchId.current != null && navigator.geolocation) { navigator.geolocation.clearWatch(watchId.current); watchId.current = null; }
+    } else {
+      setGpsNote("Waiting for GPS… the timer keeps running");
+    }
+  };
+
+  const start = () => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) { setPhase("denied"); return; }
+    t.current.startedAt = Date.now();
+    t.current.segStart = Date.now();
+    setPhase("tracking");
+    watchId.current = navigator.geolocation.watchPosition(onPos, onGpsErr, {
+      enableHighAccuracy: true, maximumAge: 0, timeout: 20000,
+    });
+  };
+
+  const pauseRun = () => {
+    t.current.accumMs += Date.now() - t.current.segStart;
+    t.current.anchor = null; // movement while paused shouldn't count; re-acquire on resume
+    setPhase("paused");
+  };
+  const resumeRun = () => { t.current.segStart = Date.now(); setPhase("tracking"); };
+
+  const finishLive = async () => {
+    if (saving) return;
+    if (!armedFinish) { setArmedFinish(true); return; }
+    setArmedFinish(false);
+    setSaving(true);
+    try {
+      if (watchId.current != null && navigator.geolocation) { navigator.geolocation.clearWatch(watchId.current); watchId.current = null; }
+      if (phaseRef.current === "tracking") t.current.accumMs += Date.now() - t.current.segStart;
+      t.current.segStart = Date.now(); // keeps elapsed honest if the save fails and tracking continues
+      await onSave({
+        startIso: new Date(t.current.startedAt).toISOString(),
+        endIso: new Date().toISOString(),
+        miles: round2(t.current.meters / METERS_PER_MILE),
+        seconds: Math.round(t.current.accumMs / 1000),
+        splits: t.current.splits,
+        source: "gps",
+      });
+    } finally { setSaving(false); }
+  };
+
+  const saveManual = async () => {
+    if (saving) return;
+    const secs = Math.round(Number(manMins) * 60);
+    if (!(secs > 0) || !(Number(manMiles) > 0)) { pushToast("Enter a distance and a time first", { tone: "error" }); return; }
+    setSaving(true);
+    try {
+      const isToday = dayStr === todayStr;
+      const p = dayStr.split("-").map(Number);
+      const end = isToday ? new Date() : new Date(p[0], p[1] - 1, p[2], 12, 0, 0);
+      const startAt = new Date(end.getTime() - secs * 1000);
+      await onSave({
+        startIso: startAt.toISOString(), endIso: end.toISOString(),
+        miles: round2(Number(manMiles)), seconds: secs, splits: [], source: "manual",
+      });
+    } finally { setSaving(false); }
+  };
+
+  const requestClose = () => {
+    if (phase === "tracking" || phase === "paused") {
+      if (!armedClose) { setArmedClose(true); return; }
+      if (watchId.current != null && navigator.geolocation) { navigator.geolocation.clearWatch(watchId.current); watchId.current = null; }
+      pushToast("Run discarded");
+    }
+    onClose();
+  };
+
+  const miles = t.current.meters / METERS_PER_MILE;
+  const elapsedSec = elapsedMs() / 1000;
+
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black">
+      <div className="mx-auto max-w-md px-4 pb-16 pt-4">
+        <header className="sticky top-0 z-10 -mx-4 border-b border-zinc-800 bg-black/90 px-4 py-3 backdrop-blur" style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}>
+          <div className="flex items-center justify-between gap-2">
+            <button onClick={requestClose} className={`flex h-11 shrink-0 items-center justify-center rounded-xl px-2 ${armedClose ? "text-red-400" : "text-zinc-400"} active:bg-zinc-800`} aria-label="close run">
+              {armedClose ? <span className="px-1 text-xs font-bold">Tap again to discard</span> : <ChevronLeft size={22} />}
+            </button>
+            <div className="min-w-0 flex-1">
+              <div className="text-base font-bold">Run</div>
+              <div className="text-xs text-zinc-500">{entryMode === "live" ? "GPS-tracked" : "Manual entry"}</div>
+            </div>
+            {entryMode === "live" && acc != null && phase !== "denied" && (
+              <span className="shrink-0 rounded bg-zinc-800 px-2 py-1 text-xs font-semibold tabular-nums text-zinc-400">GPS ±{acc}m</span>
+            )}
+          </div>
+        </header>
+
+        {entryMode === "live" && (
+          <div className="flex flex-col gap-4 pt-4">
+            {phase === "idle" && (
+              <>
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4 text-sm text-zinc-300">
+                  Distance and time record automatically from your phone's GPS.
+                  <div className="mt-2 text-xs text-zinc-500">
+                    Keep the screen on for the whole run — iPhones pause web-app GPS in the background (the screen stays awake on its own).
+                    Your location never leaves the phone; only distance, time, and mile splits are saved.
+                  </div>
+                </div>
+                <button onClick={start} className={`h-14 w-full rounded-2xl bg-lime-400 text-base font-bold text-black active:bg-lime-300 ${TRANS}`}>
+                  Start run
+                </button>
+                <button onClick={() => setEntryMode("manual")} className="h-11 rounded-xl text-xs font-semibold text-zinc-500 active:text-zinc-300">
+                  Log a past run manually instead
+                </button>
+              </>
+            )}
+
+            {phase === "denied" && (
+              <>
+                <div className="rounded-2xl border border-red-900 bg-zinc-900 p-4 text-sm text-red-300">
+                  Location isn't available — permission was denied or this device has no GPS.
+                  <div className="mt-2 text-xs text-zinc-500">
+                    On iPhone: Settings → Privacy &amp; Security → Location Services → Safari Websites (or the installed app) → While Using.
+                  </div>
+                </div>
+                <button onClick={() => setEntryMode("manual")} className={`h-12 w-full rounded-xl bg-lime-400 text-sm font-bold text-black active:bg-lime-300 ${TRANS}`}>
+                  Log the run manually
+                </button>
+              </>
+            )}
+
+            {(phase === "tracking" || phase === "paused") && (
+              <>
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6 text-center">
+                  <div className="text-xs font-semibold uppercase tracking-widest text-zinc-500">{phase === "paused" ? "Paused" : "Time"}</div>
+                  <div className="mt-1 text-6xl font-bold tabular-nums text-zinc-50">{fmtDur(elapsedSec)}</div>
+                  <div className="mt-5 grid grid-cols-2 gap-2">
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Distance</div>
+                      <div className="mt-1 text-3xl font-bold tabular-nums text-zinc-50">
+                        {miles.toFixed(2)}<span className="ml-1 text-sm font-semibold text-zinc-500">mi</span>
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Pace</div>
+                      <div className="mt-1 text-3xl font-bold tabular-nums text-zinc-50">{fmtPace(elapsedSec, miles)}</div>
+                    </div>
+                  </div>
+                  {gpsNote ? <div className="mt-4 text-xs text-amber-300">{gpsNote}</div> : null}
+                </div>
+
+                {t.current.splits.length > 0 && (
+                  <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+                    <div className="text-sm font-semibold text-zinc-100">Mile splits</div>
+                    <div className="mt-2 flex flex-col divide-y divide-zinc-800 rounded-xl bg-zinc-950">
+                      {t.current.splits.map((sp, i) => (
+                        <div key={sp.mile} className="flex items-center gap-3 px-3 py-2">
+                          <div className="w-10 text-xs font-bold text-zinc-600">MI {sp.mile}</div>
+                          <div className="flex-1 text-base font-semibold tabular-nums text-zinc-100">
+                            {fmtDur(sp.seconds - (i > 0 ? t.current.splits[i - 1].seconds : 0))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={phase === "paused" ? resumeRun : pauseRun}
+                    className={`h-14 flex-1 rounded-2xl border border-zinc-700 text-base font-bold text-zinc-200 active:bg-zinc-800 ${TRANS}`}
+                  >
+                    {phase === "paused" ? "Resume" : "Pause"}
+                  </button>
+                  <button
+                    onClick={finishLive}
+                    disabled={saving}
+                    className={`h-14 flex-1 rounded-2xl text-base font-bold ${TRANS} ${
+                      armedFinish ? "bg-lime-400 text-black" : "border border-lime-400/50 text-lime-300 active:bg-zinc-900"
+                    } ${saving ? "opacity-60" : ""}`}
+                  >
+                    {saving ? "Saving…" : armedFinish ? "Tap again to save" : "Finish"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {entryMode === "manual" && (
+          <div className="flex flex-col gap-4 pt-4">
+            <div className="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold text-zinc-100">Log a run</div>
+                <input
+                  type="date"
+                  value={dayStr}
+                  max={todayStr}
+                  onChange={(e) => { if (e.target.value) setDayStr(e.target.value); }}
+                  className="h-11 rounded-xl border border-zinc-700 bg-zinc-950 px-3 text-sm text-zinc-200 outline-none"
+                />
+              </div>
+              <Field label="Distance">
+                <Stepper small value={manMiles} onChange={setManMiles} step={0.1} min={0.1} max={200} unit="mi" />
+              </Field>
+              <Field label="Time">
+                <Stepper small value={manMins} onChange={setManMins} step={1} min={1} max={1440} unit="min" />
+              </Field>
+              <div className="text-right text-xs tabular-nums text-zinc-500">Pace {fmtPace(Number(manMins) * 60, Number(manMiles))}</div>
+              <button
+                onClick={saveManual}
+                disabled={saving}
+                className={`h-12 w-full rounded-xl bg-lime-400 text-sm font-bold text-black active:bg-lime-300 ${TRANS} ${saving ? "opacity-60" : ""}`}
+              >
+                {saving ? "Saving…" : `Save run — ${fmtW(manMiles)} mi in ${fmtDur(Number(manMins) * 60)}`}
+              </button>
+            </div>
+            {mode === "live" && (
+              <button onClick={() => { setEntryMode("live"); }} className="h-11 rounded-xl text-xs font-semibold text-zinc-500 active:text-zinc-300">
+                Back to GPS tracking
+              </button>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
