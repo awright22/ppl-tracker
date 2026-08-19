@@ -96,6 +96,7 @@ function rebuildReadable(ss, kv) {
   var sRows = [], setRows = [];
   sessions.forEach(function (s) {
     var nSets = 0, headline = "";
+    if (s.run) headline = (s.run.miles || 0) + " mi · " + Math.round((s.run.seconds || 0) / 60) + " min";
     (s.exercises || []).forEach(function (ex) {
       (ex.sets || []).forEach(function (st, idx) {
         nSets++;
