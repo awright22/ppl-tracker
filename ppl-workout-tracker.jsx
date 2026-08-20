@@ -3133,7 +3133,7 @@ function WeightScreen({ config, weights, onLog, onDelete }) {
           />
         </div>
         <div className="flex justify-center">
-          <Stepper value={val} onChange={setVal} step={0.1} min={1} max={999} unit="lb" />
+          <Stepper value={val} onChange={setVal} step={0.2} min={1} max={999} unit="lb" />
         </div>
         <button
           onClick={submit}
