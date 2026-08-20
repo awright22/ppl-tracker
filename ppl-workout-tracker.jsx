@@ -188,6 +188,29 @@ const LOAD_LABEL = {
   machine: "machine", "plate-loaded": "loaded", "bodyweight-plus": "BW +",
 };
 const LOAD_TYPES = ["db-pair", "db-single", "stack", "machine", "plate-loaded", "bodyweight-plus"];
+
+/* Warm-up / core compliance. Item lists are derived from config.mobility the
+   same way everywhere so the logging screen and the saved session agree. */
+function mobilityFilter(items, mode) {
+  return (items || []).filter((it) => !(mode === "calisthenics" && it.gymOnly));
+}
+function warmupItemsFor(mobility, dayType, mode) {
+  if (!mobility) return { general: [], day: [] };
+  const general = mobilityFilter(mobility.general, mode);
+  // An item listed in the daily reset wins the dupe battle with the day warm-up.
+  const names = new Set(general.map((it) => it.name.trim().toLowerCase()));
+  const day = mobilityFilter(mobility[dayType], mode).filter((it) => !names.has(it.name.trim().toLowerCase()));
+  return { general, day };
+}
+function coreItemsFor(mobility, dayType, mode) {
+  return mobility && mobility.core ? mobilityFilter(mobility.core[dayType], mode) : [];
+}
+// "2×10/side" → 2 rounds, "3×30–40yd/side" → 3. No leading count = one yes/no round —
+// which is also how anything hard to count (carries, holds) gets credit: a round done is a round done.
+function doseRounds(dose) {
+  const m = /^(\d+)\s*[×x]/.exec(dose || "");
+  return m ? Math.max(1, Number(m[1])) : 1;
+}
 const CHART = { line: "#65a30d", vol: "#71717a", grid: "#27272a", tick: "#71717a", surface: "#18181b", cursor: "#3f3f46" };
 
 /* ---------- themes (designed + WCAG-verified) ----------
@@ -881,7 +904,7 @@ export default function App() {
       // De-dupe the minute-resolution id so two same-minute sessions can't overwrite each other.
       let id = makeSessionId(now);
       for (let bump = 2; index.some((e) => e.id === id); bump += 1) id = `${makeSessionId(now)}-${bump}`;
-      const d = { id, date: now.toISOString(), dayType, mode, exercises };
+      const d = { id, date: now.toISOString(), dayType, mode, exercises, warmupDone: {}, coreDone: {} };
       setJustFinished(null);
       setRest(null);
       setDraft(d, "now");
@@ -942,11 +965,29 @@ export default function App() {
         persist("records", recs, "records");
       }
     }
+    // Compliance snapshots: per-item warm-up yes/no + core rounds done, so
+    // history answers "did the warm-up and core actually happen?"
+    let warmup, core;
+    if (config && config.mobility) {
+      const wu = warmupItemsFor(config.mobility, d.dayType, d.mode);
+      const wd = d.warmupDone || {};
+      const wuItems = [...wu.general, ...wu.day];
+      if (wuItems.length > 0) warmup = wuItems.map((it) => ({ id: it.id, name: it.name, done: !!wd[it.id] }));
+      const cd = d.coreDone || {};
+      const coItems = coreItemsFor(config.mobility, d.dayType, d.mode);
+      if (coItems.length > 0) {
+        core = coItems.map((it) => {
+          const target = doseRounds(it.dose);
+          return { id: it.id, name: it.name, dose: it.dose, target, done: Math.max(0, Math.min(target, Math.round(Number(cd[it.id]) || 0))) };
+        });
+      }
+    }
     const isLegsGym = d.mode === "gym" && d.dayType === "legs";
     const session = {
       id: d.id, date: d.date, endDate: new Date(opts.endAt || Date.now()).toISOString(),
       dayType: d.dayType, mode: d.mode,
       exercises: kept, qlCheck: isLegsGym ? null : undefined,
+      warmup, core,
     };
     const okSession = await store.set(`session:${d.id}`, session);
     if (!okSession) {
@@ -997,7 +1038,7 @@ export default function App() {
     if (prNames.length > 0) {
       pushToast(`🎉 PR: ${prNames.slice(0, 2).join(", ")}${prNames.length > 2 ? ` +${prNames.length - 2}` : ""}`, { tone: "success", ttl: 6500 });
     }
-  }, [persist, pushToast, setDraft]);
+  }, [config, persist, pushToast, setDraft]);
 
   /* --- auto-finish workouts left open too long --- */
   const maybeAutoFinish = useCallback(() => {
@@ -1076,7 +1117,11 @@ export default function App() {
         });
       }
     }
-    const d = { id: session.id, date: session.date, dayType, mode, exercises };
+    const warmupDone = {};
+    for (const w of session.warmup || []) if (w.done) warmupDone[w.id] = true;
+    const coreDone = {};
+    for (const c of session.core || []) if (c.done) coreDone[c.id] = c.done;
+    const d = { id: session.id, date: session.date, dayType, mode, exercises, warmupDone, coreDone };
     setJustFinished(null);
     setRest(null);
     setDraft(d, "now");
@@ -1621,27 +1666,36 @@ function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility, push
   const [armedFinish, setArmedFinish] = useArmed(3600);
   const [finishing, setFinishing] = useState(false);
   const [showMobility, setShowMobility] = useState(false);
-  const [showCore, setShowCore] = useState(false);
   const totalSets = countSets(draft.exercises);
   const dayName = DAY_LABEL[draft.dayType] || draft.dayType;
-  const filterMode = (items) => (items || []).filter((it) => !(draft.mode === "calisthenics" && it.gymOnly));
   let warmSections = null;
   if (mobility) {
-    const generalItems = filterMode(mobility.general);
-    // An item listed in the daily reset wins the dupe battle with the day warm-up.
-    const generalNames = new Set(generalItems.map((it) => it.name.trim().toLowerCase()));
-    const dayItems = filterMode(mobility[draft.dayType]).filter((it) => !generalNames.has(it.name.trim().toLowerCase()));
+    const wu = warmupItemsFor(mobility, draft.dayType, draft.mode);
     warmSections = [
       {
         title: "Daily reset",
         sub: "~12 min · floor · no equipment",
         foot: "Daily for 2 weeks before evaluating. Markers: butterfly knee symmetry + right figure-4 range vs left.",
-        items: generalItems,
+        items: wu.general,
       },
-      { title: `${dayName}-day warm-up`, items: dayItems },
+      { title: `${dayName}-day warm-up`, items: wu.day },
     ];
   }
-  const coreItems = mobility && mobility.core ? filterMode(mobility.core[draft.dayType]) : [];
+  const coreItems = coreItemsFor(mobility, draft.dayType, draft.mode);
+
+  // Compliance state lives on the draft so it survives reloads and is saved at Finish.
+  const warmupDone = draft.warmupDone || {};
+  const coreDone = draft.coreDone || {};
+  const wuAll = warmSections ? warmSections.flatMap((s) => s.items) : [];
+  const wuDoneCount = wuAll.filter((it) => warmupDone[it.id]).length;
+  const toggleWarmup = (id) =>
+    mutateDraft((d) => ({ ...d, warmupDone: { ...(d.warmupDone || {}), [id]: !(d.warmupDone || {})[id] } }));
+  const coreRounds = (id, dose) => Math.min(doseRounds(dose), Number(coreDone[id]) || 0);
+  const setCoreRounds = (item, n) => {
+    const complete = (probe) => coreItems.every((it) => (it.id === item.id ? probe : coreRounds(it.id, it.dose)) >= doseRounds(it.dose));
+    if (!complete(coreRounds(item.id, item.dose)) && complete(n)) pushToast("Core done — atta boy 💪", { tone: "success" });
+    mutateDraft((d) => ({ ...d, coreDone: { ...(d.coreDone || {}), [item.id]: n } }));
+  };
 
   const unloggedCount = draft.exercises.filter((e) => !e.skipped && e.sets.length === 0).length;
   const doFinish = async () => {
@@ -1685,6 +1739,9 @@ function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility, push
             <div className="text-sm font-semibold text-zinc-100">Warm-up & mobility</div>
             <div className="text-xs text-zinc-500">Daily reset + {dayName}-day warm-up</div>
           </div>
+          <span className={`shrink-0 text-xs font-semibold tabular-nums ${wuDoneCount >= wuAll.length && wuAll.length > 0 ? "text-lime-400" : "text-zinc-500"}`}>
+            {wuDoneCount}/{wuAll.length}
+          </span>
           <ChevronRight size={16} className="shrink-0 text-zinc-600" />
         </button>
       )}
@@ -1694,17 +1751,57 @@ function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility, push
       ))}
 
       {coreItems.length > 0 && (
-        <button
-          onClick={() => setShowCore(true)}
-          className={`flex items-center gap-3 rounded-2xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-left active:border-zinc-600 ${TRANS}`}
-        >
-          <Shield size={18} className="shrink-0 text-lime-400" />
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-zinc-100">Core — after lifts</div>
-            <div className="text-xs text-zinc-500">{coreItems.map((it) => it.name.replace(/\s*\(.*\)$/, "")).join(" · ")}</div>
+        <section className="flex flex-col gap-2">
+          <div className="flex items-center justify-between px-1 pt-1">
+            <div className="flex items-center gap-2">
+              <Shield size={16} className="text-lime-400" />
+              <span className="text-sm font-semibold text-zinc-100">Core — after lifts</span>
+            </div>
+            <span className={`text-xs font-semibold tabular-nums ${coreItems.every((it) => coreRounds(it.id, it.dose) >= doseRounds(it.dose)) ? "text-lime-400" : "text-zinc-500"}`}>
+              {coreItems.reduce((n, it) => n + coreRounds(it.id, it.dose), 0)}/{coreItems.reduce((n, it) => n + doseRounds(it.dose), 0)} sets
+            </span>
           </div>
-          <ChevronRight size={16} className="shrink-0 text-zinc-600" />
-        </button>
+          {coreItems.map((it) => {
+            const target = doseRounds(it.dose);
+            const done = coreRounds(it.id, it.dose);
+            return (
+              <div key={it.id} className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className={`text-sm font-semibold ${done >= target ? "text-zinc-500 line-through" : "text-zinc-100"}`}>
+                      {it.name}
+                      {it.badge ? (
+                        <span className="ml-2 inline-block rounded-full border border-amber-400/60 px-2 text-xs font-bold uppercase tracking-wide text-amber-300">
+                          {it.badge}
+                        </span>
+                      ) : null}
+                    </div>
+                    {it.note ? <div className="mt-1 text-xs leading-relaxed text-zinc-500">{it.note}</div> : null}
+                  </div>
+                  <div className="shrink-0 text-right text-xs font-semibold tabular-nums text-zinc-400">{it.dose}</div>
+                </div>
+                <div className="mt-3 flex items-center gap-2">
+                  {Array.from({ length: target }, (_, i) => {
+                    const filled = i < done;
+                    return (
+                      <button
+                        key={i}
+                        aria-label={`${it.name} set ${i + 1}`}
+                        onClick={() => setCoreRounds(it, i + 1 === done ? i : i + 1)}
+                        className={`flex h-11 w-11 items-center justify-center rounded-full border ${TRANS} ${
+                          filled ? "border-lime-400 bg-lime-400 text-black" : "border-zinc-600 text-transparent"
+                        }`}
+                      >
+                        <Check size={16} />
+                      </button>
+                    );
+                  })}
+                  <span className="pl-1 text-xs tabular-nums text-zinc-500">{done}/{target}</span>
+                </div>
+              </div>
+            );
+          })}
+        </section>
       )}
 
       {showMobility && warmSections && (
@@ -1713,16 +1810,9 @@ function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility, push
           subtitle={`${dayName} day · check them off as you go`}
           sections={warmSections}
           doneLabel="Done — start lifting"
+          done={warmupDone}
+          onToggle={toggleWarmup}
           onClose={() => setShowMobility(false)}
-        />
-      )}
-      {showCore && (
-        <MobilityScreen
-          title="Core — after lifts"
-          subtitle={`${dayName} day · anti-rotation & QL work`}
-          sections={[{ title: `${dayName}-day core`, items: coreItems }]}
-          doneLabel="Done — finish up"
-          onClose={() => setShowCore(false)}
         />
       )}
 
@@ -1752,15 +1842,9 @@ function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility, push
   );
 }
 
-function MobilityScreen({ title, subtitle, sections, doneLabel, onClose }) {
-  const [done, setDone] = useState(() => new Set());
-  const toggle = (id) => {
-    setDone((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  };
+// Controlled: `done` is a {itemId: true} map owned by the workout draft, so
+// checks survive reloads and get saved onto the session at Finish.
+function MobilityScreen({ title, subtitle, sections, doneLabel, done, onToggle, onClose }) {
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black">
       <div className="mx-auto max-w-md px-4 pb-16 pt-4" style={{ paddingBottom: "calc(4rem + env(safe-area-inset-bottom))" }}>
@@ -1788,9 +1872,9 @@ function MobilityScreen({ title, subtitle, sections, doneLabel, onClose }) {
                   <div className="px-4 py-4 text-sm text-zinc-600">Nothing here yet.</div>
                 )}
                 {sec.items.map((it) => {
-                  const checked = done.has(it.id);
+                  const checked = !!done[it.id];
                   return (
-                    <button key={it.id} onClick={() => toggle(it.id)} className="flex items-start gap-3 px-4 py-3 text-left">
+                    <button key={it.id} onClick={() => onToggle(it.id)} className="flex items-start gap-3 px-4 py-3 text-left">
                       <span
                         className={`mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border ${TRANS} ${
                           checked ? "border-lime-400 bg-lime-400 text-black" : "border-zinc-600"
@@ -2330,6 +2414,27 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, onR
                 Next-day QL check: {s.qlCheck === "worse" ? "worse" : "same or better"}
               </div>
             )}
+            {!editing && s.warmup && s.warmup.length > 0 && (() => {
+              const n = s.warmup.filter((w) => w.done).length;
+              return (
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+                  <div className="flex items-baseline justify-between">
+                    <h2 className="text-sm font-semibold text-zinc-100">Warm-up</h2>
+                    <span className={`text-xs font-semibold tabular-nums ${n === s.warmup.length ? "text-lime-400" : "text-zinc-500"}`}>{n}/{s.warmup.length}</span>
+                  </div>
+                  <div className="mt-2 flex flex-col gap-1.5">
+                    {s.warmup.map((w) => (
+                      <div key={w.id} className="flex items-center gap-2 text-sm">
+                        {w.done
+                          ? <Check size={14} className="shrink-0 text-lime-400" />
+                          : <X size={14} className="shrink-0 text-zinc-600" />}
+                        <span className={w.done ? "text-zinc-300" : "text-zinc-600"}>{w.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
             {s.run && (
               <>
                 <div className="grid grid-cols-3 gap-2">
@@ -2434,6 +2539,32 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, onR
                 </section>
               );
             })}
+
+            {!editing && s.core && s.core.length > 0 && (() => {
+              const doneSets = s.core.reduce((n, c) => n + (c.done || 0), 0);
+              const totalSets = s.core.reduce((n, c) => n + (c.target || 1), 0);
+              return (
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+                  <div className="flex items-baseline justify-between">
+                    <h2 className="text-sm font-semibold text-zinc-100">Core — after lifts</h2>
+                    <span className={`text-xs font-semibold tabular-nums ${doneSets >= totalSets ? "text-lime-400" : "text-zinc-500"}`}>{doneSets}/{totalSets} sets</span>
+                  </div>
+                  <div className="mt-2 flex flex-col gap-1.5">
+                    {s.core.map((c) => (
+                      <div key={c.id} className="flex items-center gap-2 text-sm">
+                        {c.done >= (c.target || 1)
+                          ? <Check size={14} className="shrink-0 text-lime-400" />
+                          : c.done > 0
+                            ? <Minus size={14} className="shrink-0 text-amber-400" />
+                            : <X size={14} className="shrink-0 text-zinc-600" />}
+                        <span className={`min-w-0 flex-1 truncate ${c.done > 0 ? "text-zinc-300" : "text-zinc-600"}`}>{c.name}</span>
+                        <span className="shrink-0 text-xs tabular-nums text-zinc-500">{c.done || 0}/{c.target || 1} · {c.dose}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
 
             {editing && (() => {
               const plan = (s.mode === "gym" ? config.days[s.dayType] : config.calisthenics[s.dayType]) || [];
