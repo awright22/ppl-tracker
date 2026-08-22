@@ -370,7 +370,10 @@ export function deloadTarget(current, increment) {
 // Rules: set 1 at the ceiling AND all sets at/above the floor -> bump;
 // set 1 at the ceiling but a set under the floor -> hold & rebuild;
 // set 1 under the ceiling, all in range -> hold & add reps;
-// 2+ consecutive sessions with MULTIPLE sets under the floor -> suggest ~5-10% drop.
+// 2+ consecutive sessions AT THE CURRENT WEIGHT with MULTIPLE sets under the
+// floor -> suggest a drop. Failures at a different (older) weight say nothing
+// about the current one, so they break the streak — otherwise taking a deload
+// would chain straight into the next suggestion after a single rebuild session.
 export function computeSuggestion(ex, perfs) {
   if (!Array.isArray(perfs) || perfs.length === 0) return null;
   const last = perfs[0];
@@ -381,7 +384,8 @@ export function computeSuggestion(ex, perfs) {
   let streak = 0;
   for (const perf of perfs) {
     const below = repsOf(perf).filter((v) => v < ex.repMin).length;
-    if (below >= 2) streak += 1; else break;
+    const topW = Math.max(...perf.sets.map((s) => Number(s.weight) || 0));
+    if (below >= 2 && Math.abs(topW - cur) < 0.01) streak += 1; else break;
   }
   if (streak >= 2) {
     const target = deloadTarget(cur, ex.increment);
