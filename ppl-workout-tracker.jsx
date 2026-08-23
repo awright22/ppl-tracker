@@ -349,6 +349,11 @@ function fmtPace(seconds, miles) {
   return `${Math.floor(sp / 60)}:${pad2(sp % 60)}/mi`;
 }
 
+function runHeadline(run) {
+  const pace = fmtPace(run.seconds, run.miles);
+  return `${fmtW(run.miles)} mi · ${fmtDur(run.seconds)}${pace !== "—" ? ` · ${pace}` : ""}`;
+}
+
 /* ---------- progression logic (exported for tests) ---------- */
 
 // Weaker-side reps for a logged set; unilateral progression gates on min(L, R).
@@ -1147,7 +1152,7 @@ export default function App() {
     setIndex((prev) => {
       const next = prev.map((e) =>
         e.id === session.id
-          ? { ...e, headline: headlineFor(session.exercises), setCount: countSets(session.exercises), ql: session.qlCheck !== undefined ? (session.qlCheck ?? null) : e.ql }
+          ? { ...e, headline: session.run ? runHeadline(session.run) : headlineFor(session.exercises), setCount: countSets(session.exercises), ql: session.qlCheck !== undefined ? (session.qlCheck ?? null) : e.ql }
           : e
       );
       persist("sessions-index", next, "history");
@@ -1232,10 +1237,9 @@ export default function App() {
       return;
     }
     sessionCache.current.set(id, session);
-    const pace = fmtPace(seconds, miles);
     const entry = {
       id, date: startIso, dayType: "run", mode: "run",
-      headline: `${fmtW(miles)} mi · ${fmtDur(seconds)}${pace !== "—" ? ` · ${pace}` : ""}`,
+      headline: runHeadline({ miles, seconds }),
       setCount: 0,
     };
     setIndex((prev) => {
@@ -2313,9 +2317,24 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, onR
   };
   const doSave = async () => {
     if (saving) return;
+    let cleaned;
+    if (edit.run) {
+      const miles = round2(Number(edit.run.miles) || 0);
+      const seconds = Math.round(Number(edit.run.seconds) || 0);
+      if (!(miles > 0) || !(seconds > 0)) {
+        pushToast("Distance and time must be above zero", { tone: "error" });
+        return;
+      }
+      // Mile splits described the original GPS recording — drop them once the
+      // numbers they summed to are hand-corrected.
+      const orig = session.run || {};
+      const changed = miles !== orig.miles || seconds !== orig.seconds;
+      cleaned = { ...edit, run: { ...edit.run, miles, seconds, splits: changed ? undefined : edit.run.splits } };
+    } else {
+      cleaned = { ...edit, exercises: edit.exercises.filter((e) => e.sets.length > 0) };
+    }
     setSaving(true);
     try {
-      const cleaned = { ...edit, exercises: edit.exercises.filter((e) => e.sets.length > 0) };
       const ok = await onSave(cleaned);
       if (ok) { setSession(cleaned); setEditing(false); }
     } finally {
@@ -2387,7 +2406,7 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, onR
                 </>
               )}
             </div>
-            {s && !editing && !s.run && (
+            {s && !editing && (
               <button onClick={startEdit} className="flex h-11 items-center gap-1 rounded-xl bg-zinc-800 px-3 text-sm font-semibold text-zinc-200 active:bg-zinc-700">
                 <Pencil size={14} /> Edit
               </button>
@@ -2439,7 +2458,42 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, onR
                 </div>
               );
             })()}
-            {s.run && (
+            {s.run && editing && (
+              <div className="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+                <div className="text-sm font-semibold text-zinc-100">Edit run</div>
+                <Field label="Distance">
+                  <Stepper
+                    small
+                    value={edit.run.miles}
+                    onChange={(v) => setEdit((p) => ({ ...p, run: { ...p.run, miles: v } }))}
+                    step={0.1} min={0.05} max={200} unit="mi"
+                  />
+                </Field>
+                <Field label="Minutes">
+                  <Stepper
+                    small
+                    value={Math.floor((edit.run.seconds || 0) / 60)}
+                    onChange={(v) => setEdit((p) => ({ ...p, run: { ...p.run, seconds: Math.max(0, Math.round(v)) * 60 + ((p.run.seconds || 0) % 60) } }))}
+                    step={1} min={0} max={600}
+                  />
+                </Field>
+                <Field label="Seconds">
+                  <Stepper
+                    small
+                    value={(edit.run.seconds || 0) % 60}
+                    onChange={(v) => setEdit((p) => ({ ...p, run: { ...p.run, seconds: Math.floor((p.run.seconds || 0) / 60) * 60 + Math.min(59, Math.max(0, Math.round(v))) } }))}
+                    step={5} min={0} max={59}
+                  />
+                </Field>
+                <div className="text-right text-xs tabular-nums text-zinc-500">
+                  Pace {fmtPace(edit.run.seconds, edit.run.miles)}
+                </div>
+                <div className="text-xs text-zinc-600">
+                  Handy for correcting a GPS reading against another tracker. Editing clears stored mile splits — they described the original recording.
+                </div>
+              </div>
+            )}
+            {s.run && !editing && (
               <>
                 <div className="grid grid-cols-3 gap-2">
                   {[["Distance", `${fmtW(s.run.miles)} mi`], ["Time", fmtDur(s.run.seconds)], ["Pace", fmtPace(s.run.seconds, s.run.miles)]].map(([label, valTxt]) => (
