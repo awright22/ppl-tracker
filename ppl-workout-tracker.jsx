@@ -142,7 +142,7 @@ export const SEED_CONFIG = {
       { id: "pushdown-rope", name: "Rope Pushdown", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "stack", current: 120, restSec: 90 },
     ],
     pull: [
-      { id: "row-csdb", name: "Chest-Supported Single-Arm DB Row", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "db-single", current: 70, unilateral: true, restSec: 120, warmupRamp: true },
+      { id: "row-csdb", name: "Chest-Supported Single-Arm DB Row", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "db-single", current: 70, unilateral: true, restSec: 120, warmupRamp: true },
       { id: "pulldown", name: "Lat Pulldown", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "stack", current: 120, restSec: 120 },
       { id: "shrug-db", name: "Seated DB Shrugs", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 75, restSec: 90 },
       { id: "facepull", name: "Face Pulls", sets: 3, repMin: 15, repMax: 20, increment: 5, unit: "lb", loadType: "stack", current: 115, restSec: 90 },
