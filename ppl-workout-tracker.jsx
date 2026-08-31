@@ -133,6 +133,15 @@ export const SEED_CONFIG = {
       ],
     },
   },
+  // Frequency / gating thresholds. Stored in config so they sync to the sheet
+  // and can be hand-tuned; missing keys are backfilled from here at boot.
+  rules: {
+    staleDays: 8, // a muscle bucket this many days old is "stale" and jumps the queue
+    returnAfterDays: 17, // exercise untouched this long -> "back from break" restart at 85/90%
+    holdAfterDays: 12, // exercise untouched this long -> a would-be bump becomes a hold
+    deloadEveryWeeks: 6, // consecutive >=2-lift weeks before a scheduled deload week is offered
+    // deloadWeekOf ("YYYY-MM-DD" Monday) is stamped at runtime when one starts.
+  },
   days: {
     push: [
       { id: "bench-db", name: "DB Bench Press", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 70, restSec: 120, warmupRamp: true },
@@ -142,15 +151,27 @@ export const SEED_CONFIG = {
       { id: "pushdown-rope", name: "Rope Pushdown", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "stack", current: 120, restSec: 90 },
     ],
     pull: [
-      { id: "row-csdb", name: "Chest-Supported Single-Arm DB Row", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "db-single", current: 70, unilateral: true, restSec: 120, warmupRamp: true },
+      // Gated slot: proper pull vs supported fallback. bb-row is fresh — the
+      // pre-injury barbell row history lives under another id and stays there.
+      // row-csdb (single-arm) retired 2025-08: left-arm rows fire the right QL
+      // via contralateral anti-rotation, muddying every check the gates read.
+      { id: "bb-row", name: "Bent-Over Barbell Row", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "plate-loaded", current: 65, restSec: 120, warmupRamp: true, gated: true, replaces: "row-cs-bilat", gateStreak: 3, note: "3-1-3-0 tempo for the first 3 sessions" },
+      { id: "row-cs-bilat", name: "Chest-Supported DB Row (bilateral)", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 55, restSec: 120, warmupRamp: true, note: "45° bench" },
       { id: "pulldown", name: "Lat Pulldown", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "stack", current: 120, restSec: 120 },
       { id: "shrug-db", name: "Seated DB Shrugs", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 75, restSec: 90 },
       { id: "facepull", name: "Face Pulls", sets: 3, repMin: 15, repMax: 20, increment: 5, unit: "lb", loadType: "stack", current: 115, restSec: 90 },
       { id: "curl-db", name: "Seated DB Bicep Curl", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 35, restSec: 90 },
     ],
     legs: [
+      // Gated slot: RDL (streak >= 6) vs the back extension holding its place.
+      // Fresh id on purpose — backext-45 WAS the RDL through July and keeps
+      // that history; resurrecting it would splice two movements together.
+      { id: "rdl", name: "Romanian Deadlift", sets: 3, repMin: 8, repMax: 12, increment: 10, unit: "lb", loadType: "plate-loaded", current: 95, restSec: 120, warmupRamp: true, gated: true, replaces: "backext-45", gateStreak: 6, note: "3s eccentric for the first 3 sessions" },
       { id: "backext-45", name: "45° Back Extension", sets: 3, repMin: 12, repMax: 12, increment: 5, unit: "lb", loadType: "bodyweight-plus", current: 50, restSec: 90 },
       { id: "slpress", name: "Single-Leg Leg Press", sets: 3, repMin: 10, repMax: 12, increment: 10, unit: "lb", loadType: "plate-loaded", current: 140, unilateral: true, restSec: 120, warmupRamp: true },
+      // Gated slot: goblet (last check passed) vs bilateral leg press —
+      // Phase 0/1 of the squat lineage; loads are sovereign, no conversion.
+      { id: "goblet", name: "Goblet Squat", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "db-single", current: 50, restSec: 120, gated: true, replaces: "legpress" },
       { id: "legpress", name: "Leg Press (bilateral)", sets: 3, repMin: 10, repMax: 12, increment: 10, unit: "lb", loadType: "plate-loaded", current: 385, restSec: 120 },
       { id: "slcurl", name: "Single-Leg Curl", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "machine", current: 60, unilateral: true, restSec: 90 },
       { id: "calf-seated", name: "Seated Calf Raise", sets: 3, repMin: 12, repMax: 15, increment: 10, unit: "lb", loadType: "machine", current: 120, restSec: 90 },
@@ -182,7 +203,7 @@ export const SEED_CONFIG = {
 /* ---------- constants & small utils ---------- */
 
 const DAY_KEYS = ["push", "pull", "legs"];
-const DAY_LABEL = { push: "Push", pull: "Pull", legs: "Legs", run: "Run" };
+const DAY_LABEL = { push: "Push", pull: "Pull", legs: "Legs", upper: "Upper", run: "Run", event: "Event" };
 const LOAD_LABEL = {
   "db-pair": "per DB", "db-single": "DB", stack: "stack",
   machine: "machine", "plate-loaded": "loaded", "bodyweight-plus": "BW +",
@@ -198,12 +219,28 @@ function warmupItemsFor(mobility, dayType, mode) {
   if (!mobility) return { general: [], day: [] };
   const general = mobilityFilter(mobility.general, mode);
   // An item listed in the daily reset wins the dupe battle with the day warm-up.
+  // Upper has no list of its own: merge push + pull, deduped by name.
+  const source = dayType === "upper" ? [...(mobility.push || []), ...(mobility.pull || [])] : mobility[dayType];
   const names = new Set(general.map((it) => it.name.trim().toLowerCase()));
-  const day = mobilityFilter(mobility[dayType], mode).filter((it) => !names.has(it.name.trim().toLowerCase()));
+  const day = [];
+  for (const it of mobilityFilter(source, mode)) {
+    const key = it.name.trim().toLowerCase();
+    if (names.has(key)) continue;
+    names.add(key);
+    day.push(it);
+  }
   return { general, day };
 }
 function coreItemsFor(mobility, dayType, mode) {
-  return mobility && mobility.core ? mobilityFilter(mobility.core[dayType], mode) : [];
+  if (!mobility || !mobility.core) return [];
+  const source = dayType === "upper" ? [...(mobility.core.push || []), ...(mobility.core.pull || [])] : mobility.core[dayType];
+  const seen = new Set();
+  return mobilityFilter(source, mode).filter((it) => {
+    const key = it.name.trim().toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 // "2×10/side" → 2 rounds, "3×30–40yd/side" → 3. No leading count = one yes/no round —
 // which is also how anything hard to count (carries, holds) gets credit: a round done is a round done.
@@ -371,6 +408,15 @@ export function deloadTarget(current, increment) {
   return Math.max(inc, round2(t));
 }
 
+// Nearest multiple of increment; when that lands exactly on `avoid` (the
+// current weight), step down one increment so a restart is never a no-op.
+export function roundToIncrement(value, increment, avoid) {
+  const inc = Number(increment) > 0 ? Number(increment) : 5;
+  let t = Math.round(value / inc) * inc;
+  if (avoid != null && Math.abs(t - avoid) < 0.001) t -= inc;
+  return Math.max(inc, round2(t));
+}
+
 // perfs: newest-first performances of ONE exercise (each { sets }).
 // Rules: set 1 at the ceiling AND all sets at/above the floor -> bump;
 // set 1 at the ceiling but a set under the floor -> hold & rebuild;
@@ -379,12 +425,25 @@ export function deloadTarget(current, increment) {
 // floor -> suggest a drop. Failures at a different (older) weight say nothing
 // about the current one, so they break the streak — otherwise taking a deload
 // would chain straight into the next suggestion after a single rebuild session.
-export function computeSuggestion(ex, perfs) {
+// opts { now, rules, gateOpen }: with `now`, break rules run first — an
+// exercise untouched >= returnAfterDays restarts at 85% (ramped compound) /
+// 90%, and one untouched >= holdAfterDays turns a would-be bump into a hold.
+// gateOpen === false (a closed QL gate at session start) also blocks bumps.
+export function computeSuggestion(ex, perfs, opts = {}) {
   if (!Array.isArray(perfs) || perfs.length === 0) return null;
   const last = perfs[0];
   if (!last || !Array.isArray(last.sets) || last.sets.length === 0) return null;
   const cur = Number(ex.current) || 0;
   const repsOf = (perf) => perf.sets.map((s) => setEffectiveReps(s, ex.unilateral));
+
+  const rules = opts.rules || {};
+  const daysSince = opts.now ? calDaysBetween(last.date, opts.now) : 0;
+  const returnAfter = Number(rules.returnAfterDays) > 0 ? Number(rules.returnAfterDays) : 17;
+  const holdAfter = Number(rules.holdAfterDays) > 0 ? Number(rules.holdAfterDays) : 12;
+  if (opts.now && cur > 0 && daysSince >= returnAfter) {
+    const target = roundToIncrement(cur * (ex.warmupRamp ? 0.85 : 0.90), ex.increment, cur);
+    return { kind: "return", target, label: `Back from break → ${fmtW(target)}` };
+  }
 
   let streak = 0;
   for (const perf of perfs) {
@@ -399,6 +458,12 @@ export function computeSuggestion(ex, perfs) {
 
   const vals = repsOf(last);
   if (vals[0] >= ex.repMax && vals.every((v) => v >= ex.repMin)) {
+    if (opts.now && daysSince >= holdAfter) {
+      return { kind: "hold", target: cur, stale: true, label: `Hold — ${holdAfter}+ days` };
+    }
+    if (opts.gateOpen === false) {
+      return { kind: "hold", target: cur, stale: true, label: "Bump held — QL gate" };
+    }
     const target = round2(cur + (Number(ex.increment) || 0));
     return { kind: "bump", target, label: `Go to ${fmtW(target)}` };
   }
@@ -423,6 +488,292 @@ export function findRecentPerfs(sessions, exerciseId, limit = 4) {
 
 export function findLastPerf(sessions, exerciseId) {
   return findRecentPerfs(sessions, exerciseId, 1)[0] || null;
+}
+
+/* ---------- frequency clocks: which day is next (exported for tests) ---------- */
+
+// Lifting sessions drive the clocks; runs and events sit outside them.
+export const isLiftEntry = (e) => !!e && e.mode !== "run" && e.mode !== "event";
+
+// Calendar-day difference in local time, so "day 11" flips at midnight the way
+// a person counts it. (daysAgo() elsewhere uses 24h blocks; the clocks can't —
+// upper-vs-push tie-breaking relies on same-day sessions tying exactly.)
+export function calDaysBetween(iso, now = new Date()) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return Infinity;
+  const from = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const to = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((to.getTime() - from.getTime()) / 86400000);
+}
+
+const BUCKET_COVERS = { push: ["push"], pull: ["pull"], legs: ["legs"], upper: ["push", "pull"] };
+
+/* Three clocks — push, pull, legs — each reading days since that bucket was
+   last trained (an Upper day resets both push and pull). The suggestion is
+   whichever candidate clears the oldest clock; `upper` is a candidate only
+   when push and pull are BOTH stale, valued at max(age.push, age.pull).
+   Trained every 2-3 days this reproduces PPL with no rotation state; after a
+   layoff it self-heals stalest-first; at ~2x/week it settles into Legs/Upper.
+   Ties: legs > upper > push > pull. Upper's value always equals the staler of
+   push/pull, so it must outrank them to ever fire; legs outranks upper so a
+   fully stale board clears the legs clock first. */
+export function pickNextDay(index, now = new Date(), rules) {
+  const staleDays = Number(rules && rules.staleDays) > 0 ? Number(rules.staleDays) : 8;
+  const age = { push: Infinity, pull: Infinity, legs: Infinity };
+  for (const e of index) {
+    if (!isLiftEntry(e)) continue;
+    const covers = BUCKET_COVERS[e.dayType];
+    if (!covers) continue;
+    const d = calDaysBetween(e.date, now);
+    for (const b of covers) if (d < age[b]) age[b] = d;
+  }
+  if (DAY_KEYS.every((b) => age[b] === Infinity)) {
+    return { day: "push", reason: "rotation", age }; // empty history: PPL starts at Push
+  }
+  const stale = DAY_KEYS.filter((b) => age[b] >= staleDays);
+  const candidates = DAY_KEYS.map((b) => ({ day: b, clears: age[b] }));
+  if (age.push >= staleDays && age.pull >= staleDays) {
+    candidates.push({ day: "upper", clears: Math.max(age.push, age.pull) });
+  }
+  const RANK = { pull: 0, push: 1, upper: 2, legs: 3 };
+  candidates.sort((a, b) => (a.clears === b.clears ? RANK[b.day] - RANK[a.day] : b.clears - a.clears));
+  return { day: candidates[0].day, reason: stale.length > 0 ? "stale" : "rotation", age };
+}
+
+/* ---------- week status: Mon-Sun frequency accounting (exported for tests) ---------- */
+
+// Local-midnight Monday of the week containing d.
+export function weekStartOf(d) {
+  const dow = (d.getDay() + 6) % 7; // Mon=0 … Sun=6
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - dow);
+}
+
+/* Lifting sessions per Mon-Sun week, current week last in `last4`.
+   State is pace-based, not raw-count-based, so Monday doesn't read as a
+   failure: ok = 3 hit or comfortably reachable; floor = tight (would need
+   to lift essentially every remaining day); below = 3 is mathematically
+   gone. weeksUnder3 counts completed weeks outright, but the in-progress
+   week only once it can no longer reach 3. */
+export function weekStatus(index, now = new Date()) {
+  const ws = weekStartOf(now);
+  const starts = [3, 2, 1, 0].map((k) => new Date(ws.getFullYear(), ws.getMonth(), ws.getDate() - 7 * k));
+  const counts = starts.map((s) => {
+    const end = new Date(s.getFullYear(), s.getMonth(), s.getDate() + 7);
+    return index.filter((e) => {
+      if (!isLiftEntry(e)) return false;
+      const t = new Date(e.date);
+      return t >= s && t < end;
+    }).length;
+  });
+  const thisWeek = counts[3];
+  const daysLeft = 7 - ((now.getDay() + 6) % 7); // remaining days, today included
+  const needed = Math.max(0, 3 - thisWeek);
+  const state = thisWeek >= 3 ? "ok" : needed > daysLeft ? "below" : needed >= daysLeft - 1 ? "floor" : "ok";
+  const weeksUnder3 = counts.slice(0, 3).filter((n) => n < 3).length + (needed > daysLeft ? 1 : 0);
+  return { thisWeek, last4: counts, weeksUnder3, state };
+}
+
+/* ---------- QL checks: streak, gates, prompt selection (exported for tests) ---------- */
+
+const QL_MIN_HOURS = 12;
+const QL_MAX_HOURS = 120;
+
+// QL-bearing entries (ql !== undefined), newest first, excluding entries too
+// fresh for their prompt to have fired — a <12h pending check must not close
+// gates or zero the streak when there was never a chance to answer it.
+export function qlBearingEntries(index, now = new Date()) {
+  const cutoff = now.getTime() - QL_MIN_HOURS * 3600000;
+  return index
+    .filter((e) => e.ql !== undefined && new Date(e.date).getTime() <= cutoff)
+    .sort(byDateDesc);
+}
+
+// Consecutive "same-or-better" answers, newest backward. A pending (null),
+// dismissed, or "worse" entry breaks it — a skipped or expired check is not a pass.
+export function qlStreak(index, now = new Date()) {
+  let n = 0;
+  for (const e of qlBearingEntries(index, now)) {
+    if (e.ql === "same-or-better") n += 1;
+    else break;
+  }
+  return n;
+}
+
+/* Per-exercise QL gate. An exercise with gateStreak needs the shared streak
+   at that length (RDL 6, BB row 3); a plain gated exercise needs the most
+   recent check to be a pass (goblet). Non-gated exercises are always open. */
+export function gateOpenFor(ex, index, now = new Date()) {
+  if (!ex || !ex.gated) return true;
+  if (Number(ex.gateStreak) > 0) return qlStreak(index, now) >= Number(ex.gateStreak);
+  const latest = qlBearingEntries(index, now)[0];
+  return !!latest && latest.ql === "same-or-better";
+}
+
+// Short reason string for held rows and gate badges.
+export function gateReason(ex, index, now = new Date()) {
+  if (Number(ex.gateStreak) > 0) return `streak ${qlStreak(index, now)}/${Number(ex.gateStreak)}`;
+  const latest = qlBearingEntries(index, now)[0];
+  if (!latest) return "no QL check yet";
+  if (latest.ql === null) return "last QL check pending";
+  if (latest.ql === "worse") return "last QL check worse";
+  if (latest.ql === "dismissed") return "last QL check skipped";
+  return "last QL check passed";
+}
+
+/* Boot-time prompt selection: the newest unanswered check prompts if it sits
+   inside the 12-120h window; ALL older unanswered ones are dismissed so they
+   break the streak instead of dangling at null forever. */
+export function qlPromptPick(index, now = new Date()) {
+  const nulls = index.filter((e) => e.ql === null).sort(byDateDesc);
+  if (nulls.length === 0) return { prompt: null, dismissIds: [] };
+  const hrs = (now.getTime() - new Date(nulls[0].date).getTime()) / 3600000;
+  return {
+    prompt: hrs >= QL_MIN_HOURS && hrs <= QL_MAX_HOURS ? nulls[0] : null,
+    dismissIds: nulls.slice(1).map((e) => e.id),
+  };
+}
+
+// Prompt copy names the session that needs the check.
+export function qlPromptText(entry) {
+  if (entry.dayType === "run") return `After your run ${fullDate(entry.date)} — how's the right QL today?`;
+  if (entry.dayType === "event") return `After ${(entry.headline || "the event").toLowerCase()} ${fullDate(entry.date)} — how's the right QL today?`;
+  return `${DAY_LABEL[entry.dayType] || entry.dayType} day ${shortDate(entry.date)} — how's the right QL today?`;
+}
+
+/* Gated-slot evaluation for a fresh draft. A gated lift is active only when
+   its gate is open AND its swap has been accepted once (offer-tap); the
+   fallback skips while the proper lift is active. Rows that already carry
+   logged sets are never touched (reopen flow). Mutates and returns the list. */
+export function applyGateSlots(exercises, index, now = new Date()) {
+  for (const de of exercises) {
+    if (!de.gated || (de.sets && de.sets.length > 0)) continue;
+    const open = gateOpenFor(de, index, now);
+    de.gateOpen = open;
+    de.gateReason = gateReason(de, index, now);
+    const active = open && de.gateAccepted;
+    if (!active) {
+      de.skipped = true;
+      de.gateHeld = true;
+    } else if (de.replaces) {
+      const fb = exercises.find((x) => x.exerciseId === de.replaces);
+      if (fb && (!fb.sets || fb.sets.length === 0)) {
+        fb.skipped = true;
+        fb.gateHeld = true;
+        fb.gateReason = `swapped out for ${de.name}`;
+      }
+    }
+  }
+  return exercises;
+}
+
+/* ---------- scheduled deload week (exported for tests) ---------- */
+
+// Is d inside the stamped deload week? The stamp is that week's Monday as a
+// local "YYYY-MM-DD"; it expires by date comparison and is never cleared —
+// afterwards it serves as the counter's reset marker.
+export function inDeloadWeek(rules, d = new Date()) {
+  const stamp = rules && rules.deloadWeekOf;
+  if (!stamp) return false;
+  const ws = weekStartOf(d);
+  return stamp === `${ws.getFullYear()}-${pad2(ws.getMonth() + 1)}-${pad2(ws.getDate())}`;
+}
+
+/* Counter of consecutive Mon-Sun weeks with >= 2 lifting sessions since the
+   last reset. Resets on a completed deload week or any completed week with
+   <= 1 lift — an under-floor week is a de facto deload, so a stop-start
+   month never stacks toward another one. The in-progress week joins the
+   count once it already has >= 2 lifts. Due when the counter reaches
+   rules.deloadEveryWeeks (and no deload week is currently active). */
+export function deloadDue(index, rules, now = new Date()) {
+  const every = Number(rules && rules.deloadEveryWeeks) > 0 ? Number(rules.deloadEveryWeeks) : 6;
+  const stamp = (rules && rules.deloadWeekOf) || null;
+  const anchor = weekStartOf(now);
+  const keyOf = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const active = stamp === keyOf(anchor);
+  const liftsIn = (start) => {
+    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7);
+    return index.filter((e) => {
+      if (!isLiftEntry(e)) return false;
+      const t = new Date(e.date);
+      return t >= start && t < end;
+    }).length;
+  };
+  let weeks = 0;
+  if (!active && liftsIn(anchor) >= 2) weeks += 1;
+  for (let k = 1; k <= 104; k += 1) {
+    const start = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() - 7 * k);
+    if (stamp === keyOf(start)) break; // completed deload week
+    if (liftsIn(start) >= 2) weeks += 1;
+    else break; // under-floor week = de facto deload
+  }
+  return { weeks, due: !active && weeks >= every, active };
+}
+
+/* ---------- Upper template + cross-day history lookup (exported for tests) ---------- */
+
+// Group a day list into slots: a gated lift and its fallback are one slot.
+function slotGroups(list) {
+  const groups = [];
+  const used = new Set();
+  const byId = new Map((list || []).map((e) => [e.id, e]));
+  for (const ex of list || []) {
+    if (used.has(ex.id)) continue;
+    if (ex.gated && ex.replaces && byId.has(ex.replaces)) {
+      groups.push([ex, byId.get(ex.replaces)]);
+      used.add(ex.id);
+      used.add(ex.replaces);
+    } else {
+      groups.push([ex]);
+      used.add(ex.id);
+    }
+  }
+  return groups;
+}
+
+/* Upper = the first three SLOTS of push + the first three of pull, generated
+   at runtime — never stored as a fourth day. A gated pair contributes both
+   members here; applyGateSlots activates one on the draft, so a live bb-row
+   rides into Upper exactly as it does on pull day. */
+export function upperTemplate(config, mode = "gym") {
+  const days = (mode === "gym" ? config.days : config.calisthenics) || {};
+  const pick = (day) => slotGroups(days[day] || []).slice(0, 3).flat();
+  return [...pick("push"), ...pick("pull")];
+}
+
+// The config day an exercise belongs to (its "home" for legacy lookups).
+export function homeDayOf(config, mode, exerciseId) {
+  const days = (mode === "gym" ? config.days : config.calisthenics) || {};
+  for (const k of DAY_KEYS) if ((days[k] || []).some((e) => e.id === exerciseId)) return k;
+  return null;
+}
+
+/* Which index entries might hold history for one exercise: entries carrying
+   exerciseIds match across any dayType (bench on an Upper day feeds the next
+   Push day and vice versa); entries predating that field fall back to the old
+   same-dayType+mode filter. Cap 6 entries per exercise, like the old per-day
+   load cap. */
+export function recentEntriesFor(index, exerciseId, homeDay, mode, cap = 6) {
+  const out = [];
+  for (const e of index) {
+    if (!isLiftEntry(e)) continue;
+    const hit = Array.isArray(e.exerciseIds)
+      ? e.exerciseIds.includes(exerciseId)
+      : e.dayType === homeDay && e.mode === mode;
+    if (hit) {
+      out.push(e);
+      if (out.length >= cap) break;
+    }
+  }
+  return out;
+}
+
+// One-line explanation for the home screen.
+export function nextDayReason(pick) {
+  if (pick.reason !== "stale") return "Next in rotation";
+  if (pick.day === "upper") return "Push + pull both stale — Upper covers both";
+  const n = pick.age[pick.day];
+  if (n === Infinity) return `Stale — ${DAY_LABEL[pick.day].toLowerCase()} never logged`;
+  return `Stale — ${n} day${n === 1 ? "" : "s"} since ${DAY_LABEL[pick.day].toLowerCase()}`;
 }
 
 function setVolume(set, unilateral) {
@@ -829,6 +1180,7 @@ export default function App() {
           : []
       );
       let c = cfg;
+      const hadRules = !!(cfg && cfg.rules); // pre-gating configs need the exercise migration below
       if (!c || !c.days || !c.calisthenics) {
         c = SEED_CONFIG;
         persist("config", SEED_CONFIG, "starting config");
@@ -836,6 +1188,36 @@ export default function App() {
         // Older stored configs predate this warm-up/core routine — replace with the seed.
         c = { ...c, mobility: SEED_CONFIG.mobility };
         persist("config", c, "warm-ups");
+      }
+      // Backfill missing frequency/gating thresholds (new keys arrive over time).
+      if (!c.rules || Object.keys(SEED_CONFIG.rules).some((k) => c.rules[k] === undefined)) {
+        c = { ...c, rules: { ...SEED_CONFIG.rules, ...(c.rules || {}) } };
+        persist("config", c, "rules");
+      }
+      // One-time gated-lift migration for stored configs that predate the QL
+      // gating build: seed rdl + goblet into legs and replace the single-arm
+      // row slot with bb-row + the bilateral chest-supported row. row-csdb
+      // leaves the plan; its sessions and records are untouched. Guarded by
+      // hadRules so a later deliberate deletion is never re-added.
+      if (!hadRules) {
+        const seedOf = (day, id) => SEED_CONFIG.days[day].find((e) => e.id === id);
+        const withInsert = (list, targetId, seeded) => {
+          if (!seeded || list.some((e) => e.id === seeded.id)) return list;
+          const i = list.findIndex((e) => e.id === targetId);
+          const next = [...list];
+          next.splice(i < 0 ? next.length : i, 0, seeded);
+          return next;
+        };
+        let legs = c.days.legs || [];
+        legs = withInsert(legs, "backext-45", seedOf("legs", "rdl"));
+        legs = withInsert(legs, "legpress", seedOf("legs", "goblet"));
+        let pull = [...(c.days.pull || [])];
+        if (!pull.some((e) => e.id === "bb-row")) {
+          const i = pull.findIndex((e) => e.id === "row-csdb");
+          pull.splice(i < 0 ? 0 : i, i < 0 ? 0 : 1, seedOf("pull", "bb-row"), seedOf("pull", "row-cs-bilat"));
+        }
+        c = { ...c, days: { ...c.days, legs, pull } };
+        persist("config", c, "gated lifts");
       }
       // Fill missing per-exercise rest durations (seed value by id, else 120 gym / 90 bodyweight).
       {
@@ -859,7 +1241,17 @@ export default function App() {
           persist("config", c, "rest timers");
         }
       }
-      const list = Array.isArray(idx) ? [...idx].sort(byDateDesc) : [];
+      let list = Array.isArray(idx) ? [...idx].sort(byDateDesc) : [];
+      // 24h QL check: the newest unanswered entry of any QL-bearing kind
+      // (legs day, gated-lift day, run, event) prompts inside the 12-120h
+      // window; older unanswered ones are dismissed so the streak reads them
+      // as misses instead of leaving them at null forever.
+      const qlPick = qlPromptPick(list, new Date());
+      if (qlPick.dismissIds.length > 0) {
+        const ids = new Set(qlPick.dismissIds);
+        list = list.map((e) => (ids.has(e.id) ? { ...e, ql: "dismissed" } : e));
+        persist("sessions-index", list, "history");
+      }
       setConfig(c);
       setIndex(list);
       if (dr && Array.isArray(dr.exercises)) {
@@ -868,12 +1260,7 @@ export default function App() {
         if (dr.rest && dr.rest.until > Date.now()) setRest(dr.rest); // resume a running rest timer
         pushToast("Resumed in-progress workout");
       }
-      // 24h QL check: latest gym legs session, unanswered, 12h–120h old.
-      const legs = list.find((e) => e.dayType === "legs" && e.mode === "gym");
-      if (legs && legs.ql === null) {
-        const hrs = (Date.now() - new Date(legs.date).getTime()) / 3600000;
-        if (hrs >= 12 && hrs <= 120) setQlPrompt(legs);
-      }
+      if (qlPick.prompt) setQlPrompt(qlPick.prompt);
       setPhase("ready");
     })();
     return () => { alive = false; };
@@ -901,15 +1288,32 @@ export default function App() {
     if (!config || starting) return;
     setStarting(true);
     try {
-      const recent = index.filter((e) => e.dayType === dayType && e.mode === mode).slice(0, 6);
-      const sessions = [];
-      for (const e of recent) {
-        const s = await loadSession(e.id); // sequential, newest first; cached after first load
-        if (s) sessions.push(s);
+      const plan =
+        dayType === "upper"
+          ? upperTemplate(config, mode)
+          : (mode === "gym" ? config.days[dayType] : config.calisthenics[dayType]) || [];
+      // Per-exercise history across any dayType (Upper <-> Push/Pull);
+      // sessions load newest first and are cached after the first load.
+      const sessionsByEx = new Map();
+      for (const ex of plan) {
+        const homeDay = dayType === "upper" ? homeDayOf(config, mode, ex.id) || dayType : dayType;
+        const list = [];
+        for (const e of recentEntriesFor(index, ex.id, homeDay, mode, 6)) {
+          const s = await loadSession(e.id);
+          if (s) list.push(s);
+        }
+        sessionsByEx.set(ex.id, list);
       }
-      const plan = (mode === "gym" ? config.days[dayType] : config.calisthenics[dayType]) || [];
       const now = new Date();
-      const exercises = plan.map((ex) => buildDraftExercise(ex, sessions, mode));
+      const exercises = plan.map((ex) =>
+        buildDraftExercise(ex, sessionsByEx.get(ex.id) || [], mode, {
+          now,
+          rules: config.rules,
+          gateOpen: ex.gated ? gateOpenFor(ex, index, now) : undefined,
+          deloadWeek: inDeloadWeek(config.rules, now),
+        })
+      );
+      applyGateSlots(exercises, index, now);
       // De-dupe the minute-resolution id so two same-minute sessions can't overwrite each other.
       let id = makeSessionId(now);
       for (let bump = 2; index.some((e) => e.id === id); bump += 1) id = `${makeSessionId(now)}-${bump}`;
@@ -929,6 +1333,32 @@ export default function App() {
     store.remove("draft");
     pushToast("Workout discarded");
   }, [pushToast, setDraft]);
+
+  /* --- accept a gated-lift swap (offer-tap: confirm once, automatic after) --- */
+  const acceptGateSwap = useCallback((exerciseId) => {
+    setConfig((prevCfg) => {
+      const days = {};
+      DAY_KEYS.forEach((k) => {
+        days[k] = (prevCfg.days[k] || []).map((ex) => (ex.id === exerciseId ? { ...ex, gateAccepted: true } : ex));
+      });
+      const nc = { ...prevCfg, days };
+      persist("config", nc, "gate swap");
+      return nc;
+    });
+    mutateDraft((d) => {
+      const gated = d.exercises.find((e) => e.exerciseId === exerciseId);
+      if (!gated) return d;
+      const exercises = d.exercises.map((e) => {
+        if (e.exerciseId === exerciseId) return { ...e, skipped: false, gateHeld: false, gateAccepted: true };
+        if (gated.replaces === e.exerciseId && e.sets.length === 0) {
+          return { ...e, skipped: true, gateHeld: true, gateReason: `swapped out for ${gated.name}` };
+        }
+        return e;
+      });
+      return { ...d, exercises };
+    }, "now");
+    pushToast("Swapped in — automatic from now on while the gate holds", { tone: "success", ttl: 5000 });
+  }, [mutateDraft, persist, pushToast]);
 
   /* --- finish workout --- */
   const finishWorkout = useCallback(async (opts = {}) => {
@@ -991,11 +1421,16 @@ export default function App() {
         });
       }
     }
-    const isLegsGym = d.mode === "gym" && d.dayType === "legs";
+    // QL-bearing: legs-gym (legs work is inherently QL-relevant) plus any gym
+    // session where a gated proper lift actually logged sets — the lift
+    // triggers the next-day check, not the day it ran on.
+    const needsQlCheck =
+      d.mode === "gym" &&
+      (d.dayType === "legs" || d.exercises.some((e) => e.gated && e.sets.length > 0));
     const session = {
       id: d.id, date: d.date, endDate: new Date(opts.endAt || Date.now()).toISOString(),
       dayType: d.dayType, mode: d.mode,
-      exercises: kept, qlCheck: isLegsGym ? null : undefined,
+      exercises: kept, qlCheck: needsQlCheck ? null : undefined,
       warmup, core,
     };
     const okSession = await store.set(`session:${d.id}`, session);
@@ -1007,10 +1442,18 @@ export default function App() {
       return;
     }
     sessionCache.current.set(d.id, session);
+    // What the day planned, so history can tell a bailed session from a short
+    // plan. Gate-held rows that stayed skipped weren't planned that day.
+    const plannedSets = d.exercises.reduce(
+      (n, e) => n + (e.gateHeld && e.skipped ? 0 : Number(e.targetSets) || 0),
+      0
+    );
     const entry = {
       id: d.id, date: d.date, dayType: d.dayType, mode: d.mode,
       headline: headlineFor(kept), setCount: countSets(kept),
-      ql: isLegsGym ? null : undefined,
+      plannedSets: plannedSets > 0 ? plannedSets : undefined,
+      exerciseIds: kept.map((e) => e.exerciseId), // history lookups match across dayTypes via this
+      ql: needsQlCheck ? null : undefined,
       pr: prNames.length > 0 || undefined,
     };
     setIndex((prev) => {
@@ -1018,12 +1461,17 @@ export default function App() {
       persist("sessions-index", next, "history");
       return next;
     });
-    // Update working weights: an accepted suggestion (or any uniform weight change)
-    // becomes the new `current` once it was actually lifted.
-    if (d.mode === "gym") {
+    // Update working weights: an accepted suggestion (or any uniform weight
+    // change) becomes the new `current` once it was actually lifted. Each
+    // exercise writes through to wherever its config entry lives, so an Upper
+    // session updates days.push / days.pull (there is no days.upper).
+    // Critical deload guard: sessions dated inside the stamped deload week
+    // never write — otherwise the 90% loads overwrite real working weights
+    // and wreck progression on resume.
+    if (d.mode === "gym" && !inDeloadWeek(config && config.rules, new Date(d.date))) {
       setConfig((prevCfg) => {
         let changed = false;
-        const dayList = (prevCfg.days[d.dayType] || []).map((cfgEx) => {
+        const bumpEx = (cfgEx) => {
           const de = d.exercises.find((e) => e.exerciseId === cfgEx.id && e.sets.length > 0);
           if (!de) return cfgEx;
           const weights = [...new Set(de.sets.map((s) => s.weight))];
@@ -1032,9 +1480,11 @@ export default function App() {
           else if (de.acceptedTarget != null && de.sets.some((s) => s.weight === de.acceptedTarget)) next = de.acceptedTarget;
           if (next !== cfgEx.current) { changed = true; return { ...cfgEx, current: next }; }
           return cfgEx;
-        });
+        };
+        const days = {};
+        DAY_KEYS.forEach((k) => { days[k] = (prevCfg.days[k] || []).map(bumpEx); });
         if (!changed) return prevCfg;
-        const nc = { ...prevCfg, days: { ...prevCfg.days, [d.dayType]: dayList } };
+        const nc = { ...prevCfg, days };
         persist("config", nc, "working weights");
         return nc;
       });
@@ -1089,15 +1539,27 @@ export default function App() {
     });
     setViewer(null);
     const { dayType, mode } = session;
-    const recent = index.filter((e) => e.dayType === dayType && e.mode === mode && e.id !== session.id).slice(0, 6);
-    const sessions = [];
-    for (const e of recent) {
-      const s = await loadSession(e.id);
-      if (s) sessions.push(s);
+    const idxSans = index.filter((e) => e.id !== session.id);
+    const plan =
+      dayType === "upper"
+        ? upperTemplate(config, mode)
+        : (mode === "gym" ? config.days[dayType] : config.calisthenics[dayType]) || [];
+    const sessionsByEx = new Map();
+    for (const ex of plan) {
+      const homeDay = dayType === "upper" ? homeDayOf(config, mode, ex.id) || dayType : dayType;
+      const list = [];
+      for (const e of recentEntriesFor(idxSans, ex.id, homeDay, mode, 6)) {
+        const s = await loadSession(e.id);
+        if (s) list.push(s);
+      }
+      sessionsByEx.set(ex.id, list);
     }
-    const plan = (mode === "gym" ? config.days[dayType] : config.calisthenics[dayType]) || [];
     const exercises = plan.map((ex) => {
-      const de = buildDraftExercise(ex, sessions, mode);
+      const de = buildDraftExercise(ex, sessionsByEx.get(ex.id) || [], mode, {
+        now: new Date(),
+        rules: config.rules,
+        deloadWeek: inDeloadWeek(config.rules, new Date(session.date)), // the session's own week
+      });
       const logged = (session.exercises || []).find((se) => se.exerciseId === ex.id);
       if (logged && logged.sets && logged.sets.length) {
         de.sets = logged.sets;
@@ -1126,6 +1588,7 @@ export default function App() {
         });
       }
     }
+    applyGateSlots(exercises, index, new Date()); // rows with restored sets are left alone
     const warmupDone = {};
     for (const w of session.warmup || []) if (w.done) warmupDone[w.id] = true;
     const coreDone = {};
@@ -1226,6 +1689,7 @@ export default function App() {
     for (let bump = 2; index.some((e) => e.id === id); bump += 1) id = `${makeSessionId(startDate)}-${bump}`;
     const session = {
       id, date: startIso, endDate: endIso, dayType: "run", mode: "run", exercises: [],
+      qlCheck: null, // runs load the QL too — next-day check applies
       run: { miles, seconds, splits: splits && splits.length ? splits : undefined, source },
     };
     const ok = await store.set(`session:${id}`, session);
@@ -1241,6 +1705,7 @@ export default function App() {
       id, date: startIso, dayType: "run", mode: "run",
       headline: runHeadline({ miles, seconds }),
       setCount: 0,
+      ql: null,
     };
     setIndex((prev) => {
       const next = [entry, ...prev.filter((e) => e.id !== id)].sort(byDateDesc);
@@ -1250,6 +1715,52 @@ export default function App() {
     setRunOverlay(null);
     pushToast(`Run saved — ${fmtW(miles)} mi in ${fmtDur(seconds)}`, { tone: "success" });
   }, [index, persist, pushToast]);
+
+  /* --- scheduled deload week --- */
+  const startDeloadWeek = useCallback(() => {
+    setConfig((prev) => {
+      const ws = weekStartOf(new Date());
+      const stamp = `${ws.getFullYear()}-${pad2(ws.getMonth() + 1)}-${pad2(ws.getDate())}`;
+      const nc = { ...prev, rules: { ...(prev.rules || {}), deloadWeekOf: stamp } };
+      persist("config", nc, "deload week");
+      return nc;
+    });
+    pushToast("Deload week on — gym drafts pre-set to 2×@90% through Sunday", { tone: "success", ttl: 6000 });
+  }, [persist, pushToast]);
+
+  /* --- one-tap events (golf, bowling) --- */
+  // Minimal sessions whose only job is carrying the next-day QL check. They
+  // never advance the clocks or count toward week status (mode "event").
+  const logEvent = useCallback(async (eventType) => {
+    const now = new Date();
+    let id = makeSessionId(now);
+    for (let bump = 2; index.some((e) => e.id === id); bump += 1) id = `${makeSessionId(now)}-${bump}`;
+    const label = eventType === "bowling" ? "Bowling" : "Golf";
+    const session = {
+      id, date: now.toISOString(), endDate: now.toISOString(),
+      dayType: "event", mode: "event", eventType, exercises: [], qlCheck: null,
+    };
+    const ok = await store.set(`session:${id}`, session);
+    if (!ok) {
+      pushToast("Couldn't save the event", {
+        tone: "error",
+        action: { label: "Retry", fn: () => logEvent(eventType) },
+      });
+      return;
+    }
+    sessionCache.current.set(id, session);
+    const entry = { id, date: session.date, dayType: "event", mode: "event", headline: label, setCount: 0, ql: null };
+    setIndex((prev) => {
+      const next = [entry, ...prev.filter((e) => e.id !== id)].sort(byDateDesc);
+      persist("sessions-index", next, "history");
+      return next;
+    });
+    pushToast(`${label} logged — QL check tomorrow`, {
+      tone: "success",
+      ttl: 6000,
+      action: { label: "Undo", fn: () => deleteSession(id) },
+    });
+  }, [deleteSession, index, persist, pushToast]);
 
   /* --- body-weight log --- */
   // One entry per calendar day (the id IS the local day), so re-logging a day updates it.
@@ -1319,9 +1830,11 @@ export default function App() {
           draft ? (
             <LoggingScreen
               draft={draft}
+              index={index}
               mutateDraft={mutateDraft}
               onFinish={finishWorkout}
               onDiscard={discardDraft}
+              onAcceptGate={acceptGateSwap}
               mobility={config.mobility}
               pushToast={pushToast}
               onSetLogged={onSetLogged}
@@ -1329,6 +1842,8 @@ export default function App() {
             />
           ) : (
             <HomeScreen
+              config={config}
+              saveConfig={saveConfig}
               index={index}
               mode={homeMode}
               setMode={setHomeMode}
@@ -1340,6 +1855,8 @@ export default function App() {
               dismissJustFinished={() => setJustFinished(null)}
               pushToast={pushToast}
               onRun={setRunOverlay}
+              onLogEvent={logEvent}
+              onStartDeload={startDeloadWeek}
             />
           )
         )}
@@ -1353,7 +1870,7 @@ export default function App() {
           <WeightScreen config={config} weights={weights} onLog={logWeight} onDelete={deleteWeight} />
         )}
         {tab === "settings" && (
-          <SettingsScreen config={config} saveConfig={saveConfig} themeKey={themeKey} />
+          <SettingsScreen config={config} saveConfig={saveConfig} themeKey={themeKey} index={index} onStartDeload={startDeloadWeek} />
         )}
       </div>
 
@@ -1450,8 +1967,6 @@ function TabBar({ tab, setTab, hasDraft }) {
 
 /* ---------- home ---------- */
 
-const NEXT_IN_ROTATION = { push: "pull", pull: "legs", legs: "push" };
-
 /* "Run okay" chip (exported for tests). Suggest a run today only when ALL hold:
    1. legs isn't up next (a run today shouldn't land within a day of legs;
       nextDay already ignores run entries),
@@ -1490,13 +2005,19 @@ export function runSuggestion(index, nextDay, now = new Date()) {
   return { kind: "go", label: `Run today — ${runs7 + 1} of ${RUN_WEEKLY_TARGET} this week` };
 }
 
-function HomeScreen({ index, mode, setMode, onStart, starting, qlPrompt, answerQl, justFinished, dismissJustFinished, pushToast, onRun }) {
+function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, starting, qlPrompt, answerQl, justFinished, dismissJustFinished, pushToast, onRun, onLogEvent, onStartDeload }) {
   const [armedDay, setArmedDay] = useState(null);
-  // PPL rotation: whatever came after the most recent lift day (any mode —
-  // a travel day advances the split just like a gym day). Runs sit outside
-  // the rotation and don't advance it.
-  const lastLift = index.find((e) => NEXT_IN_ROTATION[e.dayType]);
-  const nextDay = lastLift ? NEXT_IN_ROTATION[lastLift.dayType] : "push";
+  // Clock-based scheduling: suggest whichever bucket is stalest (any lifting
+  // mode — a travel day resets its clock just like a gym day). Runs and
+  // events sit outside the clocks.
+  const pick = pickNextDay(index, new Date(), config && config.rules);
+  const nextDay = pick.day;
+  const dayCountLabel = (day) => {
+    const n = pick.age[day];
+    if (n === Infinity) return "· never";
+    if (n === 0) return "· today";
+    return `· day ${n}`;
+  };
   useEffect(() => {
     if (!armedDay) return undefined;
     const t = setTimeout(() => setArmedDay(null), 2600);
@@ -1518,7 +2039,7 @@ function HomeScreen({ index, mode, setMode, onStart, starting, qlPrompt, answerQ
             <AlertTriangle size={18} className="mt-1 shrink-0 text-amber-400" />
             <div className="flex-1">
               <div className="text-sm font-semibold text-zinc-100">
-                Legs day {shortDate(qlPrompt.date)} — how's the right QL today?
+                {qlPromptText(qlPrompt)}
               </div>
               <div className="mt-3 flex gap-2">
                 <button
@@ -1564,6 +2085,85 @@ function HomeScreen({ index, mode, setMode, onStart, starting, qlPrompt, answerQ
         </div>
       )}
 
+      {(() => {
+        const ws = weekStatus(index, new Date());
+        const stateColor = ws.state === "ok" ? "text-lime-300" : ws.state === "floor" ? "text-amber-300" : "text-red-300";
+        const dismissedAt = (config && config.ui && config.ui.splitCheckDismissedAt) || 0;
+        const showSplit = ws.weeksUnder3 >= 2 && Date.now() - dismissedAt > 7 * 86400000;
+        return (
+          <>
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900 px-4 py-3">
+              <div className="flex items-baseline justify-between gap-2">
+                <div className={`text-sm font-bold ${stateColor}`}>
+                  This week: {ws.thisWeek} lift{ws.thisWeek === 1 ? "" : "s"}
+                </div>
+                <div className="text-xs tabular-nums text-zinc-500">last 4 weeks: {ws.last4.join("/")}</div>
+              </div>
+              <div className="mt-1 text-xs tabular-nums text-zinc-500">QL streak: {qlStreak(index)}</div>
+            </div>
+            {showSplit && (
+              <div className="rounded-2xl border border-amber-400/40 bg-zinc-900 p-4">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle size={18} className="mt-1 shrink-0 text-amber-400" />
+                  <div className="flex-1 text-sm leading-relaxed text-zinc-200">
+                    <span className="font-semibold text-amber-300">Split check:</span>{" "}
+                    {ws.weeksUnder3} of the last 4 weeks under the 3-session floor. PPL needs 3/week; consider Upper/Lower.
+                  </div>
+                  <button
+                    aria-label="dismiss split check"
+                    onClick={() => saveConfig({ ...config, ui: { ...(config.ui || {}), splitCheckDismissedAt: Date.now() } })}
+                    className="flex h-11 w-11 shrink-0 items-center justify-center text-zinc-500"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        );
+      })()}
+
+      {(() => {
+        const dl = deloadDue(index, config && config.rules, new Date());
+        if (dl.active) {
+          return (
+            <div className="rounded-2xl border border-lime-400/40 bg-zinc-900 px-4 py-3 text-sm text-zinc-200">
+              <span className="font-semibold text-lime-300">Deload week</span> — gym sessions pre-set to 2×@90%. Loads
+              resume unchanged next week.
+            </div>
+          );
+        }
+        const dismissedAt = (config && config.ui && config.ui.deloadDismissedAt) || 0;
+        if (!dl.due || dismissedAt >= weekStartOf(new Date()).getTime()) return null;
+        return (
+          <div className="rounded-2xl border border-amber-400/40 bg-zinc-900 p-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle size={18} className="mt-1 shrink-0 text-amber-400" />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold text-zinc-100">
+                  Deload week due — {dl.weeks} training weeks since the last one
+                </div>
+                <div className="mt-3">
+                  <button
+                    onClick={onStartDeload}
+                    className={`h-11 w-full rounded-xl bg-lime-400 text-sm font-bold text-black active:bg-lime-300 ${TRANS}`}
+                  >
+                    Start deload week — 2×@90%
+                  </button>
+                </div>
+              </div>
+              <button
+                aria-label="dismiss deload offer"
+                onClick={() => saveConfig({ ...config, ui: { ...(config.ui || {}), deloadDismissedAt: Date.now() } })}
+                className="flex h-11 w-11 shrink-0 items-center justify-center text-zinc-500"
+              >
+                <X size={18} />
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
       <Seg
         value={mode}
         onChange={setMode}
@@ -1576,6 +2176,29 @@ function HomeScreen({ index, mode, setMode, onStart, starting, qlPrompt, answerQ
       )}
 
       <div className="flex flex-col gap-3">
+        {nextDay === "upper" && (
+          <button
+            disabled={starting}
+            onClick={() => onStart("upper", mode)}
+            className={`group rounded-2xl border border-lime-400/50 bg-zinc-900 p-5 text-left active:border-lime-400 ${TRANS} ${starting ? "opacity-60" : ""}`}
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="text-2xl font-bold">Upper</div>
+                  <span className="rounded bg-lime-400 px-1.5 text-xs font-bold text-black">Up next</span>
+                </div>
+                <div className="mt-1 text-xs text-zinc-500">
+                  First 3 push + 3 pull slots in one session — resets both clocks
+                </div>
+                <div className="mt-1 text-xs font-semibold text-amber-300">{nextDayReason(pick)}</div>
+              </div>
+              <div className={`flex h-12 w-12 items-center justify-center rounded-full bg-lime-400 text-black ${TRANS}`}>
+                {starting ? <Loader2 size={22} className="animate-spin motion-reduce:animate-none" /> : <Dumbbell size={22} />}
+              </div>
+            </div>
+          </button>
+        )}
         {DAY_KEYS.map((day) => {
           const last = lastFor(day);
           const armed = armedDay === day;
@@ -1592,6 +2215,7 @@ function HomeScreen({ index, mode, setMode, onStart, starting, qlPrompt, answerQ
                 <div>
                   <div className="flex items-center gap-2">
                     <div className="text-2xl font-bold">{DAY_LABEL[day]}</div>
+                    <span className="text-sm font-semibold tabular-nums text-zinc-500">{dayCountLabel(day)}</span>
                     {day === nextDay && (
                       <span className="rounded bg-lime-400 px-1.5 text-xs font-bold text-black">Up next</span>
                     )}
@@ -1599,6 +2223,11 @@ function HomeScreen({ index, mode, setMode, onStart, starting, qlPrompt, answerQ
                   <div className="mt-1 text-xs text-zinc-500">
                     {last ? `${daysAgo(last.date)} · ${last.headline || `${last.setCount} sets`}` : "Never logged — start here"}
                   </div>
+                  {day === nextDay && (
+                    <div className={`mt-1 text-xs font-semibold ${pick.reason === "stale" ? "text-amber-300" : "text-lime-400"}`}>
+                      {nextDayReason(pick)}
+                    </div>
+                  )}
                 </div>
                 <div className={`flex h-12 w-12 items-center justify-center rounded-full bg-lime-400 text-black ${TRANS}`}>
                   {starting ? <Loader2 size={22} className="animate-spin motion-reduce:animate-none" /> : <Dumbbell size={22} />}
@@ -1656,6 +2285,29 @@ function HomeScreen({ index, mode, setMode, onStart, starting, qlPrompt, answerQ
             </div>
           );
         })()}
+
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-zinc-100">Log event</div>
+              <div className="text-xs text-zinc-500">Counts for the QL check, not the split</div>
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <button
+                onClick={() => onLogEvent("golf")}
+                className={`h-11 rounded-xl bg-zinc-800 px-4 text-sm font-semibold text-zinc-200 active:bg-zinc-700 ${TRANS}`}
+              >
+                ⛳ Golf
+              </button>
+              <button
+                onClick={() => onLogEvent("bowling")}
+                className={`h-11 rounded-xl bg-zinc-800 px-4 text-sm font-semibold text-zinc-200 active:bg-zinc-700 ${TRANS}`}
+              >
+                🎳 Bowling
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       {index.length === 0 && (
@@ -1669,7 +2321,7 @@ function HomeScreen({ index, mode, setMode, onStart, starting, qlPrompt, answerQ
 
 /* ---------- logging ---------- */
 
-function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility, pushToast, onSetLogged, restActive }) {
+function LoggingScreen({ draft, index, mutateDraft, onFinish, onDiscard, onAcceptGate, mobility, pushToast, onSetLogged, restActive }) {
   const [armedDiscard, setArmedDiscard] = useArmed();
   const [armedFinish, setArmedFinish] = useArmed(3600);
   const [finishing, setFinishing] = useState(false);
@@ -1754,8 +2406,32 @@ function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility, push
         </button>
       )}
 
+      {draft.mode === "gym" && (() => {
+        // Gate status strip: one line per gated slot on this day + the shared streak.
+        const slots = draft.exercises.filter((e) => e.gated);
+        if (slots.length === 0) return null;
+        const streak = qlStreak(index || []);
+        return (
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900 px-4 py-3">
+            {slots.map((s) => {
+              const active = !s.skipped;
+              const offer = s.skipped && s.gateOpen && !s.gateAccepted;
+              return (
+                <div key={s.exerciseId} className="flex items-center justify-between gap-2 py-0.5 text-xs">
+                  <span className="font-semibold text-zinc-200">{s.name}</span>
+                  <span className={active ? "text-lime-300" : offer ? "text-lime-300" : "text-amber-300"}>
+                    {active ? "in — QL gate passed" : offer ? "gate open — swap in below" : `held — ${s.gateReason || "QL gate"}`}
+                  </span>
+                </div>
+              );
+            })}
+            <div className="pt-1 text-xs text-zinc-500">QL streak: {streak}</div>
+          </div>
+        );
+      })()}
+
       {draft.exercises.map((ex, i) => (
-        <ExerciseCard key={ex.exerciseId} ex={ex} idx={i} count={draft.exercises.length} mode={draft.mode} mutateDraft={mutateDraft} onSetLogged={onSetLogged} pushToast={pushToast} />
+        <ExerciseCard key={ex.exerciseId} ex={ex} idx={i} count={draft.exercises.length} mode={draft.mode} mutateDraft={mutateDraft} onSetLogged={onSetLogged} onAcceptGate={onAcceptGate} pushToast={pushToast} />
       ))}
 
       {coreItems.length > 0 && (
@@ -1918,11 +2594,16 @@ function MobilityScreen({ title, subtitle, sections, doneLabel, done, onToggle, 
   );
 }
 
-// Build one draft exercise from a config exercise + recent same-day sessions (newest first).
-function buildDraftExercise(ex, sessions, mode) {
+// Build one draft exercise from a config exercise + recent sessions (newest first).
+// opts flows to computeSuggestion: { now, rules, gateOpen }. opts.deloadWeek
+// puts gym drafts in deload mode: 2 sets pre-filled at 90%, no bump/build.
+function buildDraftExercise(ex, sessions, mode, opts = {}) {
   const perfs = findRecentPerfs(sessions, ex.id, 4);
   const lastPerf = perfs[0] || null;
-  const suggestion = mode === "gym" ? computeSuggestion(ex, perfs) : null;
+  const deload = !!opts.deloadWeek && mode === "gym";
+  const suggestion = deload
+    ? { kind: "deload-week", label: "Deload — 2×@90%" }
+    : mode === "gym" ? computeSuggestion(ex, perfs, opts) : null;
   const firstSet = lastPerf && lastPerf.sets[0];
   const defR = (side) => {
     if (firstSet) {
@@ -1933,16 +2614,22 @@ function buildDraftExercise(ex, sessions, mode) {
     return ex.repMax || 10;
   };
   const pending = {};
-  if (mode === "gym") pending.weight = ex.current;
+  if (mode === "gym") {
+    pending.weight = deload && Number(ex.current) > 0
+      ? roundToIncrement(ex.current * 0.9, ex.increment, ex.current)
+      : ex.current;
+  }
   if (ex.unilateral) { pending.repsL = defR("repsL"); pending.repsR = defR("repsR"); }
   else pending.reps = defR();
   return {
     exerciseId: ex.id, name: ex.name,
     unilateral: !!ex.unilateral, timed: !!ex.timed, amrap: !!ex.amrap, needsBar: !!ex.needsBar,
     loadType: ex.loadType || null, repMin: ex.repMin ?? null, repMax: ex.repMax ?? null,
-    increment: ex.increment || 0, targetSets: ex.sets || 3, current: ex.current ?? null,
+    increment: ex.increment || 0, targetSets: deload ? 2 : ex.sets || 3, current: ex.current ?? null,
     restSec: ex.restSec || (mode === "gym" ? 120 : 90),
     warmupRamp: !!ex.warmupRamp,
+    gated: !!ex.gated, gateStreak: ex.gateStreak || 0, replaces: ex.replaces || null,
+    gateAccepted: !!ex.gateAccepted, gateHeld: false,
     exNote: ex.note || "", fallback: ex.fallback || "",
     lastPerf, suggestion, acceptedTarget: null,
     sets: [], note: "", skipped: false, pending,
@@ -1985,7 +2672,7 @@ function patchExercise(draft, idx, patch) {
   return { ...draft, exercises };
 }
 
-function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, pushToast }) {
+function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, onAcceptGate, pushToast }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(!!ex.note);
 
@@ -2051,7 +2738,7 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, pushToas
     mutateDraft((d) => {
       const cur = d.exercises[idx];
       const s = cur.suggestion;
-      if (!s || (s.kind !== "bump" && s.kind !== "deload")) return d;
+      if (!s || (s.kind !== "bump" && s.kind !== "deload" && s.kind !== "return")) return d;
       const accepted = cur.acceptedTarget == null;
       return patchExercise(d, idx, {
         acceptedTarget: accepted ? s.target : null,
@@ -2061,12 +2748,29 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, pushToas
   };
 
   if (ex.skipped) {
+    const offer = ex.gated && ex.gateOpen && !ex.gateAccepted;
     return (
-      <div className="flex items-center justify-between rounded-2xl border border-zinc-800 bg-zinc-950 px-4 py-3">
-        <div className="text-sm text-zinc-600 line-through">{ex.name}</div>
-        <button onClick={toggleSkip} className="flex h-11 items-center gap-1 rounded-lg px-3 text-xs font-semibold text-zinc-400 active:text-zinc-200">
-          <RotateCcw size={14} /> Undo skip
-        </button>
+      <div className="flex items-center justify-between gap-2 rounded-2xl border border-zinc-800 bg-zinc-950 px-4 py-3">
+        <div className="min-w-0">
+          <div className={`text-sm ${offer ? "font-semibold text-zinc-200" : "text-zinc-600 line-through"}`}>{ex.name}</div>
+          {ex.gateHeld && ex.gateReason ? (
+            <div className={`mt-0.5 text-xs ${offer ? "text-lime-300" : "text-zinc-500"}`}>
+              {offer ? `QL gate open — ${ex.gateReason}` : `Held — ${ex.gateReason}`}
+            </div>
+          ) : null}
+        </div>
+        {offer ? (
+          <button
+            onClick={() => onAcceptGate && onAcceptGate(ex.exerciseId)}
+            className={`h-11 shrink-0 rounded-xl bg-lime-400 px-4 text-xs font-bold text-black active:bg-lime-300 ${TRANS}`}
+          >
+            Swap in
+          </button>
+        ) : (
+          <button onClick={toggleSkip} className="flex h-11 shrink-0 items-center gap-1 rounded-lg px-3 text-xs font-semibold text-zinc-400 active:text-zinc-200">
+            <RotateCcw size={14} /> Undo skip
+          </button>
+        )}
       </div>
     );
   }
@@ -2125,7 +2829,7 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, pushToas
           <div className="text-sm text-zinc-500">First time — no history yet</div>
         )}
         {mode === "gym" && sug && (
-          sug.kind === "bump" || sug.kind === "deload" ? (
+          sug.kind === "bump" || sug.kind === "deload" || sug.kind === "return" ? (
             <button
               onClick={acceptSuggestion}
               className={`${chipBase} ${TRANS} ${
@@ -2137,13 +2841,21 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, pushToas
               }`}
             >
               {ex.acceptedTarget != null
-                ? <><Check size={14} /> {sug.kind === "deload" ? "Dropping" : "Going"} to {fmtW(sug.target)}</>
+                ? <><Check size={14} /> {sug.kind === "deload" ? "Dropping" : sug.kind === "return" ? "Restarting" : "Going"} {sug.kind === "return" ? "at" : "to"} {fmtW(sug.target)}</>
                 : sug.kind === "bump"
                   ? <><ChevronUp size={14} /> {sug.label}</>
-                  : <><ChevronDown size={14} /> {sug.label}</>}
+                  : sug.kind === "return"
+                    ? <><RotateCcw size={14} /> {sug.label}</>
+                    : <><ChevronDown size={14} /> {sug.label}</>}
             </button>
           ) : (
-            <span className={`${chipBase} border ${sug.kind === "build" ? "border-amber-400/60 text-amber-300" : "border-zinc-700 text-zinc-400"}`}>
+            <span className={`${chipBase} border ${
+              sug.kind === "deload-week"
+                ? "border-lime-400/50 text-lime-300"
+                : sug.kind === "build" || sug.stale
+                  ? "border-amber-400/60 text-amber-300"
+                  : "border-zinc-700 text-zinc-400"
+            }`}>
               {sug.label}
             </span>
           )
@@ -2264,11 +2976,16 @@ function HistoryScreen({ index, onOpen }) {
                   <span className="text-sm font-bold uppercase tracking-wide text-zinc-200">{DAY_LABEL[e.dayType] || e.dayType}</span>
                   {e.mode === "calisthenics" && <span className="rounded bg-zinc-800 px-1 py-1 text-xs font-semibold text-zinc-400">BW</span>}
                   {e.pr && <span className="rounded bg-lime-400 px-1 text-xs font-bold text-black">PR</span>}
+                  {e.plannedSets > 0 && e.setCount < 0.6 * e.plannedSets && (
+                    <span className="rounded bg-zinc-800 px-1 py-0.5 text-xs font-semibold text-amber-300">partial</span>
+                  )}
                   {e.ql === "same-or-better" && <span title="QL same or better" className="h-2 w-2 rounded-full bg-green-500" />}
                   {e.ql === "worse" && <span title="QL worse" className="h-2 w-2 rounded-full bg-red-500" />}
                 </div>
                 <div className="truncate text-xs text-zinc-500">
-                  {e.dayType === "run" ? (e.headline || "—") : `${e.headline || "—"} · ${e.setCount} sets`}
+                  {e.dayType === "run" || e.mode === "event"
+                    ? (e.headline || "—")
+                    : `${e.headline || "—"} · ${e.setCount}${e.plannedSets > 0 ? `/${e.plannedSets}` : ""} sets`}
                 </div>
               </div>
               <ChevronDown size={16} className="-rotate-90 shrink-0 text-zinc-600" />
@@ -2399,14 +3116,14 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, onR
               {s && (
                 <>
                   <div className="truncate text-base font-bold">
-                    {DAY_LABEL[s.dayType] || s.dayType}
+                    {s.mode === "event" ? (s.eventType === "bowling" ? "Bowling" : "Golf") : DAY_LABEL[s.dayType] || s.dayType}
                     {s.mode === "calisthenics" && <span className="ml-2 rounded bg-zinc-800 px-2 py-1 text-xs font-semibold text-zinc-300">BW</span>}
                   </div>
                   <div className="text-xs text-zinc-500">{fullDate(s.date)}</div>
                 </>
               )}
             </div>
-            {s && !editing && (
+            {s && !editing && s.mode !== "event" && (
               <button onClick={startEdit} className="flex h-11 items-center gap-1 rounded-xl bg-zinc-800 px-3 text-sm font-semibold text-zinc-200 active:bg-zinc-700">
                 <Pencil size={14} /> Edit
               </button>
@@ -2646,7 +3363,7 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, onR
               );
             })()}
 
-            {!editing && !s.run && (
+            {!editing && !s.run && s.mode !== "event" && (
               <button
                 onClick={() => { if (!hasDraft || armedReopen) onReopen(s); else setArmedReopen(true); }}
                 className={`flex h-12 items-center justify-center gap-2 rounded-2xl border text-sm font-semibold ${TRANS} ${
@@ -2658,7 +3375,7 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, onR
               </button>
             )}
 
-            {!editing && !s.run && <HealthLogButton session={s} pushToast={pushToast} />}
+            {!editing && !s.run && s.mode !== "event" && <HealthLogButton session={s} pushToast={pushToast} />}
 
             {!editing && (
               <button
@@ -3265,6 +3982,45 @@ function weighInIso(dayStr) {
   return new Date(p[0], p[1] - 1, p[2], 12, 0, 0).toISOString();
 }
 
+/* Weight stall detector (exported for tests). Rolling 7-day means evaluated
+   on Mondays, so Fri-dinner/Sat highs sit inside both windows instead of
+   whipsawing their edges; each window covers Tue..Mon inclusive. Weekly delta
+   = this Monday's mean − last Monday's. Stall = three consecutive deltas
+   > −0.3 lb (losing almost nothing, or gaining). A Monday with no weigh-ins
+   in its window has no mean and conservatively breaks the chain. */
+export function weightStall(weights, now = new Date()) {
+  const anchor = weekStartOf(now); // most recent Monday (local)
+  const dayKey = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const byDay = new Map();
+  for (const w of weights || []) {
+    const d = new Date(w.date);
+    if (!Number.isNaN(d.getTime()) && Number(w.weight) > 0) byDay.set(dayKey(d), Number(w.weight));
+  }
+  const meanEndingOn = (monday) => {
+    let sum = 0;
+    let n = 0;
+    for (let k = 0; k < 7; k += 1) {
+      const v = byDay.get(dayKey(new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() - k)));
+      if (v != null) { sum += v; n += 1; }
+    }
+    return n > 0 ? sum / n : null;
+  };
+  const means = [0, 1, 2, 3].map((k) =>
+    meanEndingOn(new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() - 7 * k))
+  ); // newest first
+  const deltas = [0, 1, 2].map((i) =>
+    means[i] != null && means[i + 1] != null ? round2(means[i] - means[i + 1]) : null
+  );
+  const stalled = deltas.every((d) => d != null && d > -0.3);
+  return { means, deltas, stalled, latestDelta: deltas[0] };
+}
+
+// Sat/Sun weigh-ins are planned refeed highs — tagged so they read as expected.
+const isWeekendIso = (iso) => {
+  const dow = new Date(iso).getDay();
+  return dow === 0 || dow === 6;
+};
+
 // list is newest-first. Baseline = newest weigh-in at least 30 days older than
 // the latest; while history is shorter than that, the oldest entry stands in.
 function weightDelta(list) {
@@ -3362,6 +4118,35 @@ function WeightScreen({ config, weights, onLog, onDelete }) {
             </div>
           </div>
 
+          {(() => {
+            const st = weightStall(weights, new Date());
+            if (st.stalled) {
+              return (
+                <div className="rounded-2xl border border-amber-400/40 bg-zinc-900 p-4">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-400" />
+                    <div className="text-sm leading-relaxed text-zinc-200">
+                      <span className="font-semibold text-amber-300">Stalled 3 weeks</span> — audit Fri/Sat intake before
+                      cutting 100–150 kcal.
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+            if (st.latestDelta != null) {
+              return (
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-sm text-zinc-300">
+                  Weekly trend:{" "}
+                  <span className={`font-semibold tabular-nums ${st.latestDelta <= -0.3 ? "text-lime-300" : "text-amber-300"}`}>
+                    {st.latestDelta > 0 ? "+" : ""}{fmtW(st.latestDelta)} lb
+                  </span>{" "}
+                  <span className="text-xs text-zinc-500">vs last Monday's 7-day mean</span>
+                </div>
+              );
+            }
+            return null;
+          })()}
+
           <div className="flex rounded-xl bg-zinc-950 p-1">
             {PROGRESS_RANGES.map(([key, label]) => (
               <button
@@ -3395,7 +4180,12 @@ function WeightScreen({ config, weights, onLog, onDelete }) {
           <div className="flex flex-col divide-y divide-zinc-800 rounded-2xl border border-zinc-800 bg-zinc-900 px-4">
             {rows.map((e) => (
               <div key={e.id} className="flex h-14 items-center justify-between gap-2">
-                <div className="text-sm text-zinc-300">{fullDate(e.date)}</div>
+                <div className="flex min-w-0 items-center gap-2 text-sm text-zinc-300">
+                  <span className="truncate">{fullDate(e.date)}</span>
+                  {isWeekendIso(e.date) && (
+                    <span className="shrink-0 rounded bg-zinc-800 px-1 py-0.5 text-xs font-semibold text-zinc-500">planned high</span>
+                  )}
+                </div>
                 <div className="flex items-center gap-1">
                   <div className="text-base font-semibold tabular-nums text-zinc-100">{fmtW(e.weight)} lb</div>
                   <button
@@ -3422,7 +4212,7 @@ function WeightScreen({ config, weights, onLog, onDelete }) {
 
 /* ---------- settings ---------- */
 
-function SettingsScreen({ config, saveConfig, themeKey }) {
+function SettingsScreen({ config, saveConfig, themeKey, index, onStartDeload }) {
   const [mode, setMode] = useState("gym");
   const [day, setDay] = useState("push");
   const [editingId, setEditingId] = useState(null);
@@ -3503,6 +4293,38 @@ function SettingsScreen({ config, saveConfig, themeKey }) {
           A workout with no activity for 3 hours finishes itself (or is discarded if nothing was logged).
         </div>
       </div>
+
+      {(() => {
+        const dl = deloadDue(index || [], config.rules, new Date());
+        return (
+          <div className="flex flex-col gap-2">
+            <div className="px-1 text-xs font-semibold uppercase tracking-widest text-zinc-500">Deload</div>
+            <div className="flex items-center justify-between gap-3 rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-zinc-100">Deload week</div>
+                <div className="text-xs text-zinc-500">
+                  {dl.active
+                    ? "Active through Sunday — gym drafts at 2×@90%"
+                    : `${dl.weeks} training week${dl.weeks === 1 ? "" : "s"} since the last one`}
+                </div>
+              </div>
+              <button
+                disabled={dl.active}
+                onClick={onStartDeload}
+                className={`h-11 shrink-0 rounded-xl px-4 text-sm font-bold ${TRANS} ${
+                  dl.active ? "bg-zinc-800 text-zinc-500" : "bg-lime-400 text-black active:bg-lime-300"
+                }`}
+              >
+                {dl.active ? "Active" : "Start now"}
+              </button>
+            </div>
+            <div className="px-1 text-xs text-zinc-600">
+              Feeling cooked before the {(config.rules && config.rules.deloadEveryWeeks) || 6}-week card shows? Start it
+              here — same week, same rules. Working weights are never overwritten by deload sessions.
+            </div>
+          </div>
+        );
+      })()}
 
       <Seg value={mode} onChange={(v) => { setMode(v); setEditingId(null); }} options={[{ value: "gym", label: "Gym" }, { value: "calisthenics", label: "Bodyweight" }]} />
       <Seg value={day} onChange={(v) => { setDay(v); setEditingId(null); }} options={DAY_KEYS.map((d) => ({ value: d, label: DAY_LABEL[d] }))} />
