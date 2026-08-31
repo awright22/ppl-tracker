@@ -484,6 +484,59 @@ test("gate fields: goblet lastPass, bb-row streak 3, rdl streak 6", () => {
   assert.equal(byId("row-cs-bilat").current, 55);
 });
 
+/* ================= Task 5: Upper template + cross-day history ================= */
+
+section("upperTemplate + recentEntriesFor");
+{
+  test("gym upper: first 3 push + first 3 pull slots (gated pair = one slot)", () => {
+    const t = T.upperTemplate(T.SEED_CONFIG, "gym");
+    assert.deepEqual(
+      t.map((e) => e.id),
+      ["bench-db", "ohp-db", "incline-db", "bb-row", "row-cs-bilat", "pulldown", "shrug-db"]
+    );
+  });
+  test("upper after gating: active slots total 18 sets", () => {
+    const rows = T.upperTemplate(T.SEED_CONFIG, "gym").map((e) => ({
+      exerciseId: e.id, name: e.name, targetSets: e.sets, sets: [], skipped: false, gateHeld: false,
+      gated: !!e.gated, gateStreak: e.gateStreak || 0, replaces: e.replaces || null, gateAccepted: true,
+    }));
+    T.applyGateSlots(rows, [], at(2026, 8, 31)); // no QL history: bb-row's gate is closed
+    const active = rows.filter((r) => !r.skipped);
+    assert.equal(active.reduce((n, r) => n + r.targetSets, 0), 18);
+    assert.ok(active.some((r) => r.exerciseId === "row-cs-bilat"));
+    assert.ok(!active.some((r) => r.exerciseId === "bb-row"));
+  });
+  test("calisthenics upper: first 3 + first 3", () => {
+    const t = T.upperTemplate(T.SEED_CONFIG, "calisthenics");
+    assert.deepEqual(
+      t.map((e) => e.id),
+      ["cal-pushup", "cal-pike", "cal-diamond", "cal-pullup", "cal-scap", "cal-chinup"]
+    );
+  });
+  test("recentEntriesFor: exerciseIds match any dayType; legacy falls back to home day", () => {
+    const idx = [
+      { id: "u1", date: iso(2026, 8, 30), dayType: "upper", mode: "gym", exerciseIds: ["bench-db", "pulldown"] },
+      { id: "p1", date: iso(2026, 8, 28), dayType: "push", mode: "gym", exerciseIds: ["bench-db", "ohp-db"] },
+      { id: "legacy", date: iso(2026, 8, 26), dayType: "push", mode: "gym" },
+      { id: "leg1", date: iso(2026, 8, 25), dayType: "legs", mode: "gym" },
+      { id: "r1", date: iso(2026, 8, 24), dayType: "run", mode: "run" },
+    ];
+    assert.deepEqual(T.recentEntriesFor(idx, "bench-db", "push", "gym").map((e) => e.id), ["u1", "p1", "legacy"]);
+    assert.deepEqual(T.recentEntriesFor(idx, "pulldown", "pull", "gym").map((e) => e.id), ["u1"]);
+  });
+  test("recentEntriesFor caps at 6 per exercise", () => {
+    const idx = Array.from({ length: 10 }, (_, i) => ({
+      id: "e" + i, date: iso(2026, 8, 30 - i), dayType: "push", mode: "gym", exerciseIds: ["bench-db"],
+    }));
+    assert.equal(T.recentEntriesFor(idx, "bench-db", "push", "gym").length, 6);
+  });
+  test("homeDayOf finds the source list", () => {
+    assert.equal(T.homeDayOf(T.SEED_CONFIG, "gym", "bb-row"), "pull");
+    assert.equal(T.homeDayOf(T.SEED_CONFIG, "gym", "goblet"), "legs");
+    assert.equal(T.homeDayOf(T.SEED_CONFIG, "gym", "not-a-lift"), null);
+  });
+}
+
 /* ================= summary ================= */
 
 console.log(`\n${passed} passed, ${failed} failed`);

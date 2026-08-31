@@ -217,12 +217,28 @@ function warmupItemsFor(mobility, dayType, mode) {
   if (!mobility) return { general: [], day: [] };
   const general = mobilityFilter(mobility.general, mode);
   // An item listed in the daily reset wins the dupe battle with the day warm-up.
+  // Upper has no list of its own: merge push + pull, deduped by name.
+  const source = dayType === "upper" ? [...(mobility.push || []), ...(mobility.pull || [])] : mobility[dayType];
   const names = new Set(general.map((it) => it.name.trim().toLowerCase()));
-  const day = mobilityFilter(mobility[dayType], mode).filter((it) => !names.has(it.name.trim().toLowerCase()));
+  const day = [];
+  for (const it of mobilityFilter(source, mode)) {
+    const key = it.name.trim().toLowerCase();
+    if (names.has(key)) continue;
+    names.add(key);
+    day.push(it);
+  }
   return { general, day };
 }
 function coreItemsFor(mobility, dayType, mode) {
-  return mobility && mobility.core ? mobilityFilter(mobility.core[dayType], mode) : [];
+  if (!mobility || !mobility.core) return [];
+  const source = dayType === "upper" ? [...(mobility.core.push || []), ...(mobility.core.pull || [])] : mobility.core[dayType];
+  const seen = new Set();
+  return mobilityFilter(source, mode).filter((it) => {
+    const key = it.name.trim().toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 // "2×10/side" → 2 rounds, "3×30–40yd/side" → 3. No leading count = one yes/no round —
 // which is also how anything hard to count (carries, holds) gets credit: a round done is a round done.
@@ -646,6 +662,64 @@ export function applyGateSlots(exercises, index, now = new Date()) {
     }
   }
   return exercises;
+}
+
+/* ---------- Upper template + cross-day history lookup (exported for tests) ---------- */
+
+// Group a day list into slots: a gated lift and its fallback are one slot.
+function slotGroups(list) {
+  const groups = [];
+  const used = new Set();
+  const byId = new Map((list || []).map((e) => [e.id, e]));
+  for (const ex of list || []) {
+    if (used.has(ex.id)) continue;
+    if (ex.gated && ex.replaces && byId.has(ex.replaces)) {
+      groups.push([ex, byId.get(ex.replaces)]);
+      used.add(ex.id);
+      used.add(ex.replaces);
+    } else {
+      groups.push([ex]);
+      used.add(ex.id);
+    }
+  }
+  return groups;
+}
+
+/* Upper = the first three SLOTS of push + the first three of pull, generated
+   at runtime — never stored as a fourth day. A gated pair contributes both
+   members here; applyGateSlots activates one on the draft, so a live bb-row
+   rides into Upper exactly as it does on pull day. */
+export function upperTemplate(config, mode = "gym") {
+  const days = (mode === "gym" ? config.days : config.calisthenics) || {};
+  const pick = (day) => slotGroups(days[day] || []).slice(0, 3).flat();
+  return [...pick("push"), ...pick("pull")];
+}
+
+// The config day an exercise belongs to (its "home" for legacy lookups).
+export function homeDayOf(config, mode, exerciseId) {
+  const days = (mode === "gym" ? config.days : config.calisthenics) || {};
+  for (const k of DAY_KEYS) if ((days[k] || []).some((e) => e.id === exerciseId)) return k;
+  return null;
+}
+
+/* Which index entries might hold history for one exercise: entries carrying
+   exerciseIds match across any dayType (bench on an Upper day feeds the next
+   Push day and vice versa); entries predating that field fall back to the old
+   same-dayType+mode filter. Cap 6 entries per exercise, like the old per-day
+   load cap. */
+export function recentEntriesFor(index, exerciseId, homeDay, mode, cap = 6) {
+  const out = [];
+  for (const e of index) {
+    if (!isLiftEntry(e)) continue;
+    const hit = Array.isArray(e.exerciseIds)
+      ? e.exerciseIds.includes(exerciseId)
+      : e.dayType === homeDay && e.mode === mode;
+    if (hit) {
+      out.push(e);
+      if (out.length >= cap) break;
+    }
+  }
+  return out;
 }
 
 // One-line explanation for the home screen.
@@ -1169,16 +1243,25 @@ export default function App() {
     if (!config || starting) return;
     setStarting(true);
     try {
-      const recent = index.filter((e) => e.dayType === dayType && e.mode === mode).slice(0, 6);
-      const sessions = [];
-      for (const e of recent) {
-        const s = await loadSession(e.id); // sequential, newest first; cached after first load
-        if (s) sessions.push(s);
+      const plan =
+        dayType === "upper"
+          ? upperTemplate(config, mode)
+          : (mode === "gym" ? config.days[dayType] : config.calisthenics[dayType]) || [];
+      // Per-exercise history across any dayType (Upper <-> Push/Pull);
+      // sessions load newest first and are cached after the first load.
+      const sessionsByEx = new Map();
+      for (const ex of plan) {
+        const homeDay = dayType === "upper" ? homeDayOf(config, mode, ex.id) || dayType : dayType;
+        const list = [];
+        for (const e of recentEntriesFor(index, ex.id, homeDay, mode, 6)) {
+          const s = await loadSession(e.id);
+          if (s) list.push(s);
+        }
+        sessionsByEx.set(ex.id, list);
       }
-      const plan = (mode === "gym" ? config.days[dayType] : config.calisthenics[dayType]) || [];
       const now = new Date();
       const exercises = plan.map((ex) =>
-        buildDraftExercise(ex, sessions, mode, {
+        buildDraftExercise(ex, sessionsByEx.get(ex.id) || [], mode, {
           now,
           rules: config.rules,
           gateOpen: ex.gated ? gateOpenFor(ex, index, now) : undefined,
@@ -1323,6 +1406,7 @@ export default function App() {
       id: d.id, date: d.date, dayType: d.dayType, mode: d.mode,
       headline: headlineFor(kept), setCount: countSets(kept),
       plannedSets: plannedSets > 0 ? plannedSets : undefined,
+      exerciseIds: kept.map((e) => e.exerciseId), // history lookups match across dayTypes via this
       ql: needsQlCheck ? null : undefined,
       pr: prNames.length > 0 || undefined,
     };
@@ -1331,12 +1415,14 @@ export default function App() {
       persist("sessions-index", next, "history");
       return next;
     });
-    // Update working weights: an accepted suggestion (or any uniform weight change)
-    // becomes the new `current` once it was actually lifted.
+    // Update working weights: an accepted suggestion (or any uniform weight
+    // change) becomes the new `current` once it was actually lifted. Each
+    // exercise writes through to wherever its config entry lives, so an Upper
+    // session updates days.push / days.pull (there is no days.upper).
     if (d.mode === "gym") {
       setConfig((prevCfg) => {
         let changed = false;
-        const dayList = (prevCfg.days[d.dayType] || []).map((cfgEx) => {
+        const bumpEx = (cfgEx) => {
           const de = d.exercises.find((e) => e.exerciseId === cfgEx.id && e.sets.length > 0);
           if (!de) return cfgEx;
           const weights = [...new Set(de.sets.map((s) => s.weight))];
@@ -1345,9 +1431,11 @@ export default function App() {
           else if (de.acceptedTarget != null && de.sets.some((s) => s.weight === de.acceptedTarget)) next = de.acceptedTarget;
           if (next !== cfgEx.current) { changed = true; return { ...cfgEx, current: next }; }
           return cfgEx;
-        });
+        };
+        const days = {};
+        DAY_KEYS.forEach((k) => { days[k] = (prevCfg.days[k] || []).map(bumpEx); });
         if (!changed) return prevCfg;
-        const nc = { ...prevCfg, days: { ...prevCfg.days, [d.dayType]: dayList } };
+        const nc = { ...prevCfg, days };
         persist("config", nc, "working weights");
         return nc;
       });
@@ -1402,15 +1490,23 @@ export default function App() {
     });
     setViewer(null);
     const { dayType, mode } = session;
-    const recent = index.filter((e) => e.dayType === dayType && e.mode === mode && e.id !== session.id).slice(0, 6);
-    const sessions = [];
-    for (const e of recent) {
-      const s = await loadSession(e.id);
-      if (s) sessions.push(s);
+    const idxSans = index.filter((e) => e.id !== session.id);
+    const plan =
+      dayType === "upper"
+        ? upperTemplate(config, mode)
+        : (mode === "gym" ? config.days[dayType] : config.calisthenics[dayType]) || [];
+    const sessionsByEx = new Map();
+    for (const ex of plan) {
+      const homeDay = dayType === "upper" ? homeDayOf(config, mode, ex.id) || dayType : dayType;
+      const list = [];
+      for (const e of recentEntriesFor(idxSans, ex.id, homeDay, mode, 6)) {
+        const s = await loadSession(e.id);
+        if (s) list.push(s);
+      }
+      sessionsByEx.set(ex.id, list);
     }
-    const plan = (mode === "gym" ? config.days[dayType] : config.calisthenics[dayType]) || [];
     const exercises = plan.map((ex) => {
-      const de = buildDraftExercise(ex, sessions, mode, { now: new Date(), rules: config.rules });
+      const de = buildDraftExercise(ex, sessionsByEx.get(ex.id) || [], mode, { now: new Date(), rules: config.rules });
       const logged = (session.exercises || []).find((se) => se.exerciseId === ex.id);
       if (logged && logged.sets && logged.sets.length) {
         de.sets = logged.sets;
@@ -1973,6 +2069,29 @@ function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, startin
       )}
 
       <div className="flex flex-col gap-3">
+        {nextDay === "upper" && (
+          <button
+            disabled={starting}
+            onClick={() => onStart("upper", mode)}
+            className={`group rounded-2xl border border-lime-400/50 bg-zinc-900 p-5 text-left active:border-lime-400 ${TRANS} ${starting ? "opacity-60" : ""}`}
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="text-2xl font-bold">Upper</div>
+                  <span className="rounded bg-lime-400 px-1.5 text-xs font-bold text-black">Up next</span>
+                </div>
+                <div className="mt-1 text-xs text-zinc-500">
+                  First 3 push + 3 pull slots in one session — resets both clocks
+                </div>
+                <div className="mt-1 text-xs font-semibold text-amber-300">{nextDayReason(pick)}</div>
+              </div>
+              <div className={`flex h-12 w-12 items-center justify-center rounded-full bg-lime-400 text-black ${TRANS}`}>
+                {starting ? <Loader2 size={22} className="animate-spin motion-reduce:animate-none" /> : <Dumbbell size={22} />}
+              </div>
+            </div>
+          </button>
+        )}
         {DAY_KEYS.map((day) => {
           const last = lastFor(day);
           const armed = armedDay === day;
