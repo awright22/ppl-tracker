@@ -3861,6 +3861,45 @@ function weighInIso(dayStr) {
   return new Date(p[0], p[1] - 1, p[2], 12, 0, 0).toISOString();
 }
 
+/* Weight stall detector (exported for tests). Rolling 7-day means evaluated
+   on Mondays, so Fri-dinner/Sat highs sit inside both windows instead of
+   whipsawing their edges; each window covers Tue..Mon inclusive. Weekly delta
+   = this Monday's mean − last Monday's. Stall = three consecutive deltas
+   > −0.3 lb (losing almost nothing, or gaining). A Monday with no weigh-ins
+   in its window has no mean and conservatively breaks the chain. */
+export function weightStall(weights, now = new Date()) {
+  const anchor = weekStartOf(now); // most recent Monday (local)
+  const dayKey = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const byDay = new Map();
+  for (const w of weights || []) {
+    const d = new Date(w.date);
+    if (!Number.isNaN(d.getTime()) && Number(w.weight) > 0) byDay.set(dayKey(d), Number(w.weight));
+  }
+  const meanEndingOn = (monday) => {
+    let sum = 0;
+    let n = 0;
+    for (let k = 0; k < 7; k += 1) {
+      const v = byDay.get(dayKey(new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() - k)));
+      if (v != null) { sum += v; n += 1; }
+    }
+    return n > 0 ? sum / n : null;
+  };
+  const means = [0, 1, 2, 3].map((k) =>
+    meanEndingOn(new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() - 7 * k))
+  ); // newest first
+  const deltas = [0, 1, 2].map((i) =>
+    means[i] != null && means[i + 1] != null ? round2(means[i] - means[i + 1]) : null
+  );
+  const stalled = deltas.every((d) => d != null && d > -0.3);
+  return { means, deltas, stalled, latestDelta: deltas[0] };
+}
+
+// Sat/Sun weigh-ins are planned refeed highs — tagged so they read as expected.
+const isWeekendIso = (iso) => {
+  const dow = new Date(iso).getDay();
+  return dow === 0 || dow === 6;
+};
+
 // list is newest-first. Baseline = newest weigh-in at least 30 days older than
 // the latest; while history is shorter than that, the oldest entry stands in.
 function weightDelta(list) {
@@ -3958,6 +3997,35 @@ function WeightScreen({ config, weights, onLog, onDelete }) {
             </div>
           </div>
 
+          {(() => {
+            const st = weightStall(weights, new Date());
+            if (st.stalled) {
+              return (
+                <div className="rounded-2xl border border-amber-400/40 bg-zinc-900 p-4">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-400" />
+                    <div className="text-sm leading-relaxed text-zinc-200">
+                      <span className="font-semibold text-amber-300">Stalled 3 weeks</span> — audit Fri/Sat intake before
+                      cutting 100–150 kcal.
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+            if (st.latestDelta != null) {
+              return (
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-sm text-zinc-300">
+                  Weekly trend:{" "}
+                  <span className={`font-semibold tabular-nums ${st.latestDelta <= -0.3 ? "text-lime-300" : "text-amber-300"}`}>
+                    {st.latestDelta > 0 ? "+" : ""}{fmtW(st.latestDelta)} lb
+                  </span>{" "}
+                  <span className="text-xs text-zinc-500">vs last Monday's 7-day mean</span>
+                </div>
+              );
+            }
+            return null;
+          })()}
+
           <div className="flex rounded-xl bg-zinc-950 p-1">
             {PROGRESS_RANGES.map(([key, label]) => (
               <button
@@ -3991,7 +4059,12 @@ function WeightScreen({ config, weights, onLog, onDelete }) {
           <div className="flex flex-col divide-y divide-zinc-800 rounded-2xl border border-zinc-800 bg-zinc-900 px-4">
             {rows.map((e) => (
               <div key={e.id} className="flex h-14 items-center justify-between gap-2">
-                <div className="text-sm text-zinc-300">{fullDate(e.date)}</div>
+                <div className="flex min-w-0 items-center gap-2 text-sm text-zinc-300">
+                  <span className="truncate">{fullDate(e.date)}</span>
+                  {isWeekendIso(e.date) && (
+                    <span className="shrink-0 rounded bg-zinc-800 px-1 py-0.5 text-xs font-semibold text-zinc-500">planned high</span>
+                  )}
+                </div>
                 <div className="flex items-center gap-1">
                   <div className="text-base font-semibold tabular-nums text-zinc-100">{fmtW(e.weight)} lb</div>
                   <button

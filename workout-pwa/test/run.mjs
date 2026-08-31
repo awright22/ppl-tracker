@@ -537,6 +537,55 @@ section("upperTemplate + recentEntriesFor");
   });
 }
 
+/* ================= Task 6: weight stall detector ================= */
+
+section("weightStall");
+{
+  const now = at(2026, 8, 31, 9); // Monday
+  const w = (y, m, d, weight) => ({ id: `w-${y}${m}${d}`, date: iso(y, m, d, 8), weight });
+  const mondays = (vals) => [w(2026, 8, 10, vals[3]), w(2026, 8, 17, vals[2]), w(2026, 8, 24, vals[1]), w(2026, 8, 31, vals[0])];
+
+  test("flat weight for four Mondays = stalled", () => {
+    const st = T.weightStall(mondays([200, 200, 200, 200]), now);
+    assert.equal(st.stalled, true);
+    assert.deepEqual(st.deltas, [0, 0, 0]);
+  });
+  test("gaining also reads as stalled (deltas > -0.3)", () => {
+    const st = T.weightStall(mondays([201.5, 201, 200.5, 200]), now);
+    assert.equal(st.stalled, true);
+    assert.equal(st.latestDelta, 0.5);
+  });
+  test("steady loss is not a stall", () => {
+    const st = T.weightStall(mondays([198.5, 199, 199.5, 200]), now);
+    assert.equal(st.stalled, false);
+    assert.equal(st.latestDelta, -0.5);
+  });
+  test("-0.3 exactly breaks the stall chain; -0.29 does not", () => {
+    assert.equal(T.weightStall(mondays([200.0, 200.3, 200.6, 200.9]), now).stalled, false);
+    assert.equal(T.weightStall(mondays([200.0, 200.29, 200.58, 200.87]), now).stalled, true);
+  });
+  test("a week with no weigh-ins breaks the chain (no phantom stalls)", () => {
+    const st = T.weightStall([w(2026, 8, 10, 200), w(2026, 8, 17, 200), w(2026, 8, 31, 200)], now);
+    assert.equal(st.stalled, false);
+    assert.equal(st.latestDelta, null); // Aug 24 window is empty
+  });
+  test("windows are Tue..Mon: Fri/Sat highs live inside, means average the window", () => {
+    // Current window (Aug 25 - 31): 199 on Wed, 203 refeed Sat, 200 Mon -> mean 200.67
+    // Prior window: flat 201.67 equivalent via three entries.
+    const data = [
+      w(2026, 8, 26, 199), w(2026, 8, 29, 203), w(2026, 8, 31, 200),
+      w(2026, 8, 19, 200), w(2026, 8, 22, 204), w(2026, 8, 24, 201),
+    ];
+    const st = T.weightStall(data, now);
+    assert.equal(Math.round(st.means[0] * 100) / 100, Math.round(((199 + 203 + 200) / 3) * 100) / 100);
+    assert.equal(st.latestDelta, Math.round(((199 + 203 + 200) / 3 - (200 + 204 + 201) / 3) * 100) / 100);
+  });
+  test("weigh-ins outside the four windows are ignored", () => {
+    const st = T.weightStall([w(2026, 7, 1, 190), ...mondays([200, 200, 200, 200])], now);
+    assert.deepEqual(st.deltas, [0, 0, 0]);
+  });
+}
+
 /* ================= summary ================= */
 
 console.log(`\n${passed} passed, ${failed} failed`);
