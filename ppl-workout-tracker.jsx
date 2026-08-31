@@ -137,6 +137,8 @@ export const SEED_CONFIG = {
   // and can be hand-tuned; missing keys are backfilled from here at boot.
   rules: {
     staleDays: 8, // a muscle bucket this many days old is "stale" and jumps the queue
+    returnAfterDays: 17, // exercise untouched this long -> "back from break" restart at 85/90%
+    holdAfterDays: 12, // exercise untouched this long -> a would-be bump becomes a hold
   },
   days: {
     push: [
@@ -376,6 +378,15 @@ export function deloadTarget(current, increment) {
   return Math.max(inc, round2(t));
 }
 
+// Nearest multiple of increment; when that lands exactly on `avoid` (the
+// current weight), step down one increment so a restart is never a no-op.
+export function roundToIncrement(value, increment, avoid) {
+  const inc = Number(increment) > 0 ? Number(increment) : 5;
+  let t = Math.round(value / inc) * inc;
+  if (avoid != null && Math.abs(t - avoid) < 0.001) t -= inc;
+  return Math.max(inc, round2(t));
+}
+
 // perfs: newest-first performances of ONE exercise (each { sets }).
 // Rules: set 1 at the ceiling AND all sets at/above the floor -> bump;
 // set 1 at the ceiling but a set under the floor -> hold & rebuild;
@@ -384,12 +395,25 @@ export function deloadTarget(current, increment) {
 // floor -> suggest a drop. Failures at a different (older) weight say nothing
 // about the current one, so they break the streak — otherwise taking a deload
 // would chain straight into the next suggestion after a single rebuild session.
-export function computeSuggestion(ex, perfs) {
+// opts { now, rules, gateOpen }: with `now`, break rules run first — an
+// exercise untouched >= returnAfterDays restarts at 85% (ramped compound) /
+// 90%, and one untouched >= holdAfterDays turns a would-be bump into a hold.
+// gateOpen === false (a closed QL gate at session start) also blocks bumps.
+export function computeSuggestion(ex, perfs, opts = {}) {
   if (!Array.isArray(perfs) || perfs.length === 0) return null;
   const last = perfs[0];
   if (!last || !Array.isArray(last.sets) || last.sets.length === 0) return null;
   const cur = Number(ex.current) || 0;
   const repsOf = (perf) => perf.sets.map((s) => setEffectiveReps(s, ex.unilateral));
+
+  const rules = opts.rules || {};
+  const daysSince = opts.now ? calDaysBetween(last.date, opts.now) : 0;
+  const returnAfter = Number(rules.returnAfterDays) > 0 ? Number(rules.returnAfterDays) : 17;
+  const holdAfter = Number(rules.holdAfterDays) > 0 ? Number(rules.holdAfterDays) : 12;
+  if (opts.now && cur > 0 && daysSince >= returnAfter) {
+    const target = roundToIncrement(cur * (ex.warmupRamp ? 0.85 : 0.90), ex.increment, cur);
+    return { kind: "return", target, label: `Back from break → ${fmtW(target)}` };
+  }
 
   let streak = 0;
   for (const perf of perfs) {
@@ -404,6 +428,12 @@ export function computeSuggestion(ex, perfs) {
 
   const vals = repsOf(last);
   if (vals[0] >= ex.repMax && vals.every((v) => v >= ex.repMin)) {
+    if (opts.now && daysSince >= holdAfter) {
+      return { kind: "hold", target: cur, stale: true, label: `Hold — ${holdAfter}+ days` };
+    }
+    if (opts.gateOpen === false) {
+      return { kind: "hold", target: cur, stale: true, label: "Bump held — QL gate" };
+    }
     const target = round2(cur + (Number(ex.increment) || 0));
     return { kind: "bump", target, label: `Go to ${fmtW(target)}` };
   }
@@ -1011,7 +1041,7 @@ export default function App() {
       }
       const plan = (mode === "gym" ? config.days[dayType] : config.calisthenics[dayType]) || [];
       const now = new Date();
-      const exercises = plan.map((ex) => buildDraftExercise(ex, sessions, mode));
+      const exercises = plan.map((ex) => buildDraftExercise(ex, sessions, mode, { now, rules: config.rules }));
       // De-dupe the minute-resolution id so two same-minute sessions can't overwrite each other.
       let id = makeSessionId(now);
       for (let bump = 2; index.some((e) => e.id === id); bump += 1) id = `${makeSessionId(now)}-${bump}`;
@@ -1206,7 +1236,7 @@ export default function App() {
     }
     const plan = (mode === "gym" ? config.days[dayType] : config.calisthenics[dayType]) || [];
     const exercises = plan.map((ex) => {
-      const de = buildDraftExercise(ex, sessions, mode);
+      const de = buildDraftExercise(ex, sessions, mode, { now: new Date(), rules: config.rules });
       const logged = (session.exercises || []).find((se) => se.exerciseId === ex.id);
       if (logged && logged.sets && logged.sets.length) {
         de.sets = logged.sets;
@@ -2076,11 +2106,12 @@ function MobilityScreen({ title, subtitle, sections, doneLabel, done, onToggle, 
   );
 }
 
-// Build one draft exercise from a config exercise + recent same-day sessions (newest first).
-function buildDraftExercise(ex, sessions, mode) {
+// Build one draft exercise from a config exercise + recent sessions (newest first).
+// opts flows to computeSuggestion: { now, rules, gateOpen }.
+function buildDraftExercise(ex, sessions, mode, opts = {}) {
   const perfs = findRecentPerfs(sessions, ex.id, 4);
   const lastPerf = perfs[0] || null;
-  const suggestion = mode === "gym" ? computeSuggestion(ex, perfs) : null;
+  const suggestion = mode === "gym" ? computeSuggestion(ex, perfs, opts) : null;
   const firstSet = lastPerf && lastPerf.sets[0];
   const defR = (side) => {
     if (firstSet) {
@@ -2209,7 +2240,7 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, pushToas
     mutateDraft((d) => {
       const cur = d.exercises[idx];
       const s = cur.suggestion;
-      if (!s || (s.kind !== "bump" && s.kind !== "deload")) return d;
+      if (!s || (s.kind !== "bump" && s.kind !== "deload" && s.kind !== "return")) return d;
       const accepted = cur.acceptedTarget == null;
       return patchExercise(d, idx, {
         acceptedTarget: accepted ? s.target : null,
@@ -2283,7 +2314,7 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, pushToas
           <div className="text-sm text-zinc-500">First time — no history yet</div>
         )}
         {mode === "gym" && sug && (
-          sug.kind === "bump" || sug.kind === "deload" ? (
+          sug.kind === "bump" || sug.kind === "deload" || sug.kind === "return" ? (
             <button
               onClick={acceptSuggestion}
               className={`${chipBase} ${TRANS} ${
@@ -2295,13 +2326,15 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, pushToas
               }`}
             >
               {ex.acceptedTarget != null
-                ? <><Check size={14} /> {sug.kind === "deload" ? "Dropping" : "Going"} to {fmtW(sug.target)}</>
+                ? <><Check size={14} /> {sug.kind === "deload" ? "Dropping" : sug.kind === "return" ? "Restarting" : "Going"} {sug.kind === "return" ? "at" : "to"} {fmtW(sug.target)}</>
                 : sug.kind === "bump"
                   ? <><ChevronUp size={14} /> {sug.label}</>
-                  : <><ChevronDown size={14} /> {sug.label}</>}
+                  : sug.kind === "return"
+                    ? <><RotateCcw size={14} /> {sug.label}</>
+                    : <><ChevronDown size={14} /> {sug.label}</>}
             </button>
           ) : (
-            <span className={`${chipBase} border ${sug.kind === "build" ? "border-amber-400/60 text-amber-300" : "border-zinc-700 text-zinc-400"}`}>
+            <span className={`${chipBase} border ${sug.kind === "build" || sug.stale ? "border-amber-400/60 text-amber-300" : "border-zinc-700 text-zinc-400"}`}>
               {sug.label}
             </span>
           )

@@ -254,6 +254,77 @@ section("weekStatus");
   });
 }
 
+/* ================= Task 3: roundToIncrement + break rules ================= */
+
+section("roundToIncrement");
+test("nearest multiple of the increment", () => {
+  assert.equal(T.roundToIncrement(346.5, 10), 350);
+  assert.equal(T.roundToIncrement(63, 5), 65);
+  assert.equal(T.roundToIncrement(59.5, 5), 60);
+});
+test("steps down one increment when it would land on the current weight", () => {
+  assert.equal(T.roundToIncrement(48, 5, 50), 45);
+  assert.equal(T.roundToIncrement(9, 2.5, 10), 7.5);
+});
+test("never below one increment", () => {
+  assert.equal(T.roundToIncrement(1, 5), 5);
+});
+
+section("computeSuggestion break rules");
+{
+  const perf = (dateIso, weight, reps) => ({ date: dateIso, sets: reps.map((r) => ({ weight, reps: r })) });
+  const now = at(2026, 8, 31);
+  const rules = { returnAfterDays: 17, holdAfterDays: 12 };
+  const bench = { current: 70, increment: 5, repMin: 8, repMax: 12, warmupRamp: true };
+  const stack = { current: 120, increment: 5, repMin: 10, repMax: 12 };
+
+  test("17+ days: return at 85% for the ramped compound", () => {
+    const s = T.computeSuggestion(bench, [perf(iso(2026, 8, 11), 70, [12, 12, 12])], { now, rules });
+    assert.equal(s.kind, "return");
+    assert.equal(s.target, 60); // 70 × 0.85 = 59.5 → 60
+    assert.equal(s.label, "Back from break → 60");
+  });
+  test("17+ days: return at 90% for non-compounds", () => {
+    const s = T.computeSuggestion(stack, [perf(iso(2026, 8, 11), 120, [12, 12, 12])], { now, rules });
+    assert.equal(s.kind, "return");
+    assert.equal(s.target, 110); // 120 × 0.90 = 108 → 110
+  });
+  test("return outranks a pending deload streak", () => {
+    const perfs = [perf(iso(2026, 8, 11), 120, [8, 7, 6]), perf(iso(2026, 8, 8), 120, [8, 7, 7])];
+    const s = T.computeSuggestion(stack, perfs, { now, rules });
+    assert.equal(s.kind, "return");
+  });
+  test("12-16 days: earned bump becomes an informational hold", () => {
+    const s = T.computeSuggestion(stack, [perf(iso(2026, 8, 18), 120, [12, 12, 12])], { now, rules });
+    assert.equal(s.kind, "hold");
+    assert.equal(s.stale, true);
+    assert.equal(s.label, "Hold — 12+ days");
+  });
+  test("12-16 days: build and deload pass through untouched", () => {
+    const b = T.computeSuggestion(stack, [perf(iso(2026, 8, 18), 120, [12, 9, 8])], { now, rules });
+    assert.equal(b.kind, "build");
+    const perfs = [perf(iso(2026, 8, 18), 120, [8, 7, 6]), perf(iso(2026, 8, 15), 120, [8, 7, 7])];
+    assert.equal(T.computeSuggestion(stack, perfs, { now, rules }).kind, "deload");
+  });
+  test("under 12 days: bump as normal", () => {
+    const s = T.computeSuggestion(stack, [perf(iso(2026, 8, 28), 120, [12, 12, 12])], { now, rules });
+    assert.equal(s.kind, "bump");
+    assert.equal(s.target, 125);
+  });
+  test("closed gate blocks a bump but not a build", () => {
+    const held = T.computeSuggestion(stack, [perf(iso(2026, 8, 28), 120, [12, 12, 12])], { now, rules, gateOpen: false });
+    assert.equal(held.kind, "hold");
+    assert.equal(held.label, "Bump held — QL gate");
+    const b = T.computeSuggestion(stack, [perf(iso(2026, 8, 28), 120, [12, 9, 8])], { now, rules, gateOpen: false });
+    assert.equal(b.kind, "build");
+    assert.equal(T.computeSuggestion(stack, [perf(iso(2026, 8, 28), 120, [12, 12, 12])], { now, rules, gateOpen: true }).kind, "bump");
+  });
+  test("without opts.now the old behavior stands (no break rules)", () => {
+    const s = T.computeSuggestion(stack, [perf(iso(2026, 8, 1), 120, [12, 12, 12])]);
+    assert.equal(s.kind, "bump");
+  });
+}
+
 /* ================= summary ================= */
 
 console.log(`\n${passed} passed, ${failed} failed`);
