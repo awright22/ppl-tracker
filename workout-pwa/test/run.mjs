@@ -325,6 +325,165 @@ section("computeSuggestion break rules");
   });
 }
 
+/* ================= Task 4: QL streak, gates, prompts, slots ================= */
+
+section("qlStreak + gates");
+{
+  const now = at(2026, 8, 31, 12);
+  const qle = (dateIso, ql, extra = {}) => ({ id: "q" + dateIso + (extra.dayType || ""), date: dateIso, dayType: "legs", mode: "gym", ql, ...extra });
+  const pass = (y, m, d) => qle(iso(y, m, d), "same-or-better");
+
+  test("streak counts consecutive passes newest-back", () => {
+    const idx = [pass(2026, 8, 28), pass(2026, 8, 25), pass(2026, 8, 22), qle(iso(2026, 8, 19), "worse"), pass(2026, 8, 16)];
+    assert.equal(T.qlStreak(idx, now), 3);
+  });
+  test("dismissed and pending (null) break the streak — not a pass", () => {
+    assert.equal(T.qlStreak([qle(iso(2026, 8, 28), "dismissed"), pass(2026, 8, 25)], now), 0);
+    assert.equal(T.qlStreak([qle(iso(2026, 8, 28), null), pass(2026, 8, 25)], now), 0);
+  });
+  test("entries under 12h old are invisible to streak and gates", () => {
+    const fresh = qle(at(2026, 8, 31, 6).toISOString(), null); // 6h old
+    const idx = [fresh, pass(2026, 8, 28), pass(2026, 8, 25)];
+    assert.equal(T.qlStreak(idx, now), 2);
+    assert.equal(T.gateOpenFor({ gated: true }, idx, now), true);
+  });
+  test("runs and events carry ql like any other entry", () => {
+    const idx = [qle(iso(2026, 8, 29), "same-or-better", { dayType: "run", mode: "run" }), pass(2026, 8, 26)];
+    assert.equal(T.qlStreak(idx, now), 2);
+  });
+  test("lastPass gate: open only on a passing most-recent check", () => {
+    const goblet = { gated: true };
+    assert.equal(T.gateOpenFor(goblet, [pass(2026, 8, 28)], now), true);
+    assert.equal(T.gateOpenFor(goblet, [qle(iso(2026, 8, 28), "worse"), pass(2026, 8, 25)], now), false);
+    assert.equal(T.gateOpenFor(goblet, [qle(iso(2026, 8, 28), "dismissed"), pass(2026, 8, 25)], now), false);
+    assert.equal(T.gateOpenFor(goblet, [], now), false); // no history = closed
+  });
+  test("streak gates: bb-row at 3, rdl at 6", () => {
+    const three = [pass(2026, 8, 28), pass(2026, 8, 25), pass(2026, 8, 22)];
+    assert.equal(T.gateOpenFor({ gated: true, gateStreak: 3 }, three, now), true);
+    assert.equal(T.gateOpenFor({ gated: true, gateStreak: 6 }, three, now), false);
+  });
+  test("non-gated exercises are always open", () => {
+    assert.equal(T.gateOpenFor({ id: "bench-db" }, [], now), true);
+  });
+  test("gateReason strings", () => {
+    assert.equal(T.gateReason({ gated: true, gateStreak: 6 }, [pass(2026, 8, 28), pass(2026, 8, 25)], now), "streak 2/6");
+    assert.equal(T.gateReason({ gated: true }, [qle(iso(2026, 8, 28), "worse")], now), "last QL check worse");
+    assert.equal(T.gateReason({ gated: true }, [qle(iso(2026, 8, 28), "dismissed")], now), "last QL check skipped");
+    assert.equal(T.gateReason({ gated: true }, [], now), "no QL check yet");
+  });
+}
+
+section("qlPromptPick + qlPromptText");
+{
+  const now = at(2026, 8, 31, 12);
+  const entry = (dateIso, ql, extra = {}) => ({ id: "p" + dateIso + (extra.dayType || ""), date: dateIso, dayType: "legs", mode: "gym", ql, ...extra });
+
+  test("newest pending in 12-120h prompts; older pendings dismissed", () => {
+    const idx = [entry(iso(2026, 8, 30), null), entry(iso(2026, 8, 27), null), entry(iso(2026, 8, 25), null)];
+    const p = T.qlPromptPick(idx, now);
+    assert.equal(p.prompt.id, idx[0].id);
+    assert.deepEqual(p.dismissIds, [idx[1].id, idx[2].id]);
+  });
+  test("too fresh (<12h): no prompt yet, but older pendings still dismissed", () => {
+    const idx = [entry(at(2026, 8, 31, 6).toISOString(), null), entry(iso(2026, 8, 27), null)];
+    const p = T.qlPromptPick(idx, now);
+    assert.equal(p.prompt, null);
+    assert.deepEqual(p.dismissIds, [idx[1].id]);
+  });
+  test("expired (>120h): no prompt", () => {
+    const p = T.qlPromptPick([entry(iso(2026, 8, 20), null)], now);
+    assert.equal(p.prompt, null);
+    assert.deepEqual(p.dismissIds, []);
+  });
+  test("nothing pending: nothing to do", () => {
+    const p = T.qlPromptPick([entry(iso(2026, 8, 30), "same-or-better")], now);
+    assert.equal(p.prompt, null);
+  });
+  test("prompt copy names the session type", () => {
+    assert.match(T.qlPromptText({ dayType: "run", date: iso(2026, 8, 29) }), /^After your run .*how's the right QL today\?$/);
+    assert.match(T.qlPromptText({ dayType: "event", headline: "Golf", date: iso(2026, 8, 29) }), /^After golf .*QL today\?$/);
+    assert.match(T.qlPromptText({ dayType: "legs", date: iso(2026, 8, 29) }), /^Legs day .*QL today\?$/);
+    assert.match(T.qlPromptText({ dayType: "pull", date: iso(2026, 8, 29) }), /^Pull day /);
+  });
+}
+
+section("applyGateSlots");
+{
+  const now = at(2026, 8, 31, 12);
+  const pass = (y, m, d) => ({ id: "s" + d, date: iso(y, m, d), dayType: "legs", mode: "gym", ql: "same-or-better" });
+  const failIdx = [{ id: "w", date: iso(2026, 8, 28), dayType: "legs", mode: "gym", ql: "worse" }];
+  const draftRow = (id, extra = {}) => ({ exerciseId: id, name: id, sets: [], skipped: false, gateHeld: false, ...extra });
+  const goblet = (extra = {}) => draftRow("goblet", { gated: true, replaces: "legpress", gateAccepted: true, ...extra });
+
+  test("open + accepted: proper lift active, fallback swapped out", () => {
+    const exs = T.applyGateSlots([goblet(), draftRow("legpress")], [pass(2026, 8, 28)], now);
+    assert.equal(exs[0].skipped, false);
+    assert.equal(exs[1].skipped, true);
+    assert.equal(exs[1].gateHeld, true);
+    assert.match(exs[1].gateReason, /swapped out for goblet/);
+  });
+  test("closed gate: proper lift held with reason, fallback active", () => {
+    const exs = T.applyGateSlots([goblet(), draftRow("legpress")], failIdx, now);
+    assert.equal(exs[0].skipped, true);
+    assert.equal(exs[0].gateHeld, true);
+    assert.equal(exs[0].gateReason, "last QL check worse");
+    assert.equal(exs[1].skipped, false);
+  });
+  test("open + not yet accepted: offer state, fallback stays active", () => {
+    const exs = T.applyGateSlots([goblet({ gateAccepted: false }), draftRow("legpress")], [pass(2026, 8, 28)], now);
+    assert.equal(exs[0].skipped, true);
+    assert.equal(exs[0].gateOpen, true);
+    assert.equal(exs[1].skipped, false);
+  });
+  test("rows with logged sets are never touched (reopen)", () => {
+    const exs = T.applyGateSlots(
+      [goblet({ sets: [{ weight: 50, reps: 10 }] }), draftRow("legpress", { sets: [{ weight: 385, reps: 10 }] })],
+      failIdx,
+      now
+    );
+    assert.equal(exs[0].skipped, false);
+    assert.equal(exs[1].skipped, false);
+  });
+  test("streak-gated slot: rdl held at 2/6 while goblet-style gate would pass", () => {
+    const idx = [pass(2026, 8, 28), pass(2026, 8, 25)];
+    const rows = [
+      draftRow("rdl", { gated: true, gateStreak: 6, replaces: "backext-45", gateAccepted: true }),
+      draftRow("backext-45"),
+    ];
+    const exs = T.applyGateSlots(rows, idx, now);
+    assert.equal(exs[0].skipped, true);
+    assert.equal(exs[0].gateReason, "streak 2/6");
+    assert.equal(exs[1].skipped, false);
+  });
+}
+
+section("SEED_CONFIG gated slots");
+test("rdl and goblet sit ahead of their fallbacks in legs", () => {
+  const ids = T.SEED_CONFIG.days.legs.map((e) => e.id);
+  assert.ok(ids.indexOf("rdl") >= 0 && ids.indexOf("rdl") < ids.indexOf("backext-45"));
+  assert.ok(ids.indexOf("goblet") >= 0 && ids.indexOf("goblet") < ids.indexOf("legpress"));
+});
+test("pull slot swapped: bb-row + bilateral row in, single-arm row out", () => {
+  const ids = T.SEED_CONFIG.days.pull.map((e) => e.id);
+  assert.equal(ids[0], "bb-row");
+  assert.equal(ids[1], "row-cs-bilat");
+  assert.ok(!ids.includes("row-csdb"));
+});
+test("gate fields: goblet lastPass, bb-row streak 3, rdl streak 6", () => {
+  const byId = (id) => T.SEED_CONFIG.days.legs.concat(T.SEED_CONFIG.days.pull).find((e) => e.id === id);
+  assert.equal(byId("goblet").gated, true);
+  assert.equal(byId("goblet").gateStreak, undefined);
+  assert.equal(byId("goblet").replaces, "legpress");
+  assert.equal(byId("bb-row").gateStreak, 3);
+  assert.equal(byId("bb-row").replaces, "row-cs-bilat");
+  assert.equal(byId("rdl").gateStreak, 6);
+  assert.equal(byId("rdl").replaces, "backext-45");
+  assert.equal(byId("rdl").current, 95);
+  assert.equal(byId("bb-row").current, 65);
+  assert.equal(byId("row-cs-bilat").current, 55);
+});
+
 /* ================= summary ================= */
 
 console.log(`\n${passed} passed, ${failed} failed`);

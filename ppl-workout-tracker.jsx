@@ -149,15 +149,27 @@ export const SEED_CONFIG = {
       { id: "pushdown-rope", name: "Rope Pushdown", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "stack", current: 120, restSec: 90 },
     ],
     pull: [
-      { id: "row-csdb", name: "Chest-Supported Single-Arm DB Row", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "db-single", current: 70, unilateral: true, restSec: 120, warmupRamp: true },
+      // Gated slot: proper pull vs supported fallback. bb-row is fresh — the
+      // pre-injury barbell row history lives under another id and stays there.
+      // row-csdb (single-arm) retired 2025-08: left-arm rows fire the right QL
+      // via contralateral anti-rotation, muddying every check the gates read.
+      { id: "bb-row", name: "Bent-Over Barbell Row", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "plate-loaded", current: 65, restSec: 120, warmupRamp: true, gated: true, replaces: "row-cs-bilat", gateStreak: 3, note: "3-1-3-0 tempo for the first 3 sessions" },
+      { id: "row-cs-bilat", name: "Chest-Supported DB Row (bilateral)", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 55, restSec: 120, warmupRamp: true, note: "45° bench" },
       { id: "pulldown", name: "Lat Pulldown", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "stack", current: 120, restSec: 120 },
       { id: "shrug-db", name: "Seated DB Shrugs", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 75, restSec: 90 },
       { id: "facepull", name: "Face Pulls", sets: 3, repMin: 15, repMax: 20, increment: 5, unit: "lb", loadType: "stack", current: 115, restSec: 90 },
       { id: "curl-db", name: "Seated DB Bicep Curl", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 35, restSec: 90 },
     ],
     legs: [
+      // Gated slot: RDL (streak >= 6) vs the back extension holding its place.
+      // Fresh id on purpose — backext-45 WAS the RDL through July and keeps
+      // that history; resurrecting it would splice two movements together.
+      { id: "rdl", name: "Romanian Deadlift", sets: 3, repMin: 8, repMax: 12, increment: 10, unit: "lb", loadType: "plate-loaded", current: 95, restSec: 120, warmupRamp: true, gated: true, replaces: "backext-45", gateStreak: 6, note: "3s eccentric for the first 3 sessions" },
       { id: "backext-45", name: "45° Back Extension", sets: 3, repMin: 12, repMax: 12, increment: 5, unit: "lb", loadType: "bodyweight-plus", current: 50, restSec: 90 },
       { id: "slpress", name: "Single-Leg Leg Press", sets: 3, repMin: 10, repMax: 12, increment: 10, unit: "lb", loadType: "plate-loaded", current: 140, unilateral: true, restSec: 120, warmupRamp: true },
+      // Gated slot: goblet (last check passed) vs bilateral leg press —
+      // Phase 0/1 of the squat lineage; loads are sovereign, no conversion.
+      { id: "goblet", name: "Goblet Squat", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "db-single", current: 50, restSec: 120, gated: true, replaces: "legpress" },
       { id: "legpress", name: "Leg Press (bilateral)", sets: 3, repMin: 10, repMax: 12, increment: 10, unit: "lb", loadType: "plate-loaded", current: 385, restSec: 120 },
       { id: "slcurl", name: "Single-Leg Curl", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "machine", current: 60, unilateral: true, restSec: 90 },
       { id: "calf-seated", name: "Seated Calf Raise", sets: 3, repMin: 12, repMax: 15, increment: 10, unit: "lb", loadType: "machine", current: 120, restSec: 90 },
@@ -189,7 +201,7 @@ export const SEED_CONFIG = {
 /* ---------- constants & small utils ---------- */
 
 const DAY_KEYS = ["push", "pull", "legs"];
-const DAY_LABEL = { push: "Push", pull: "Pull", legs: "Legs", run: "Run" };
+const DAY_LABEL = { push: "Push", pull: "Pull", legs: "Legs", upper: "Upper", run: "Run", event: "Event" };
 const LOAD_LABEL = {
   "db-pair": "per DB", "db-single": "DB", stack: "stack",
   machine: "machine", "plate-loaded": "loaded", "bodyweight-plus": "BW +",
@@ -541,6 +553,99 @@ export function weekStatus(index, now = new Date()) {
   const state = thisWeek >= 3 ? "ok" : needed > daysLeft ? "below" : needed >= daysLeft - 1 ? "floor" : "ok";
   const weeksUnder3 = counts.slice(0, 3).filter((n) => n < 3).length + (needed > daysLeft ? 1 : 0);
   return { thisWeek, last4: counts, weeksUnder3, state };
+}
+
+/* ---------- QL checks: streak, gates, prompt selection (exported for tests) ---------- */
+
+const QL_MIN_HOURS = 12;
+const QL_MAX_HOURS = 120;
+
+// QL-bearing entries (ql !== undefined), newest first, excluding entries too
+// fresh for their prompt to have fired — a <12h pending check must not close
+// gates or zero the streak when there was never a chance to answer it.
+export function qlBearingEntries(index, now = new Date()) {
+  const cutoff = now.getTime() - QL_MIN_HOURS * 3600000;
+  return index
+    .filter((e) => e.ql !== undefined && new Date(e.date).getTime() <= cutoff)
+    .sort(byDateDesc);
+}
+
+// Consecutive "same-or-better" answers, newest backward. A pending (null),
+// dismissed, or "worse" entry breaks it — a skipped or expired check is not a pass.
+export function qlStreak(index, now = new Date()) {
+  let n = 0;
+  for (const e of qlBearingEntries(index, now)) {
+    if (e.ql === "same-or-better") n += 1;
+    else break;
+  }
+  return n;
+}
+
+/* Per-exercise QL gate. An exercise with gateStreak needs the shared streak
+   at that length (RDL 6, BB row 3); a plain gated exercise needs the most
+   recent check to be a pass (goblet). Non-gated exercises are always open. */
+export function gateOpenFor(ex, index, now = new Date()) {
+  if (!ex || !ex.gated) return true;
+  if (Number(ex.gateStreak) > 0) return qlStreak(index, now) >= Number(ex.gateStreak);
+  const latest = qlBearingEntries(index, now)[0];
+  return !!latest && latest.ql === "same-or-better";
+}
+
+// Short reason string for held rows and gate badges.
+export function gateReason(ex, index, now = new Date()) {
+  if (Number(ex.gateStreak) > 0) return `streak ${qlStreak(index, now)}/${Number(ex.gateStreak)}`;
+  const latest = qlBearingEntries(index, now)[0];
+  if (!latest) return "no QL check yet";
+  if (latest.ql === null) return "last QL check pending";
+  if (latest.ql === "worse") return "last QL check worse";
+  if (latest.ql === "dismissed") return "last QL check skipped";
+  return "last QL check passed";
+}
+
+/* Boot-time prompt selection: the newest unanswered check prompts if it sits
+   inside the 12-120h window; ALL older unanswered ones are dismissed so they
+   break the streak instead of dangling at null forever. */
+export function qlPromptPick(index, now = new Date()) {
+  const nulls = index.filter((e) => e.ql === null).sort(byDateDesc);
+  if (nulls.length === 0) return { prompt: null, dismissIds: [] };
+  const hrs = (now.getTime() - new Date(nulls[0].date).getTime()) / 3600000;
+  return {
+    prompt: hrs >= QL_MIN_HOURS && hrs <= QL_MAX_HOURS ? nulls[0] : null,
+    dismissIds: nulls.slice(1).map((e) => e.id),
+  };
+}
+
+// Prompt copy names the session that needs the check.
+export function qlPromptText(entry) {
+  if (entry.dayType === "run") return `After your run ${fullDate(entry.date)} — how's the right QL today?`;
+  if (entry.dayType === "event") return `After ${(entry.headline || "the event").toLowerCase()} ${fullDate(entry.date)} — how's the right QL today?`;
+  return `${DAY_LABEL[entry.dayType] || entry.dayType} day ${shortDate(entry.date)} — how's the right QL today?`;
+}
+
+/* Gated-slot evaluation for a fresh draft. A gated lift is active only when
+   its gate is open AND its swap has been accepted once (offer-tap); the
+   fallback skips while the proper lift is active. Rows that already carry
+   logged sets are never touched (reopen flow). Mutates and returns the list. */
+export function applyGateSlots(exercises, index, now = new Date()) {
+  for (const de of exercises) {
+    if (!de.gated || (de.sets && de.sets.length > 0)) continue;
+    const open = gateOpenFor(de, index, now);
+    de.gateOpen = open;
+    de.gateReason = gateReason(de, index, now);
+    const active = open && de.gateAccepted;
+    if (!active) {
+      de.skipped = true;
+      de.gateHeld = true;
+    } else if (de.replaces) {
+      const fb = exercises.find((x) => x.exerciseId === de.replaces);
+      if (fb && (!fb.sets || fb.sets.length === 0)) {
+        fb.skipped = true;
+        fb.gateHeld = true;
+        fb.gateReason = `swapped out for ${de.name}`;
+      }
+    }
+  }
+  return exercises;
 }
 
 // One-line explanation for the home screen.
@@ -956,6 +1061,7 @@ export default function App() {
           : []
       );
       let c = cfg;
+      const hadRules = !!(cfg && cfg.rules); // pre-gating configs need the exercise migration below
       if (!c || !c.days || !c.calisthenics) {
         c = SEED_CONFIG;
         persist("config", SEED_CONFIG, "starting config");
@@ -968,6 +1074,31 @@ export default function App() {
       if (!c.rules || Object.keys(SEED_CONFIG.rules).some((k) => c.rules[k] === undefined)) {
         c = { ...c, rules: { ...SEED_CONFIG.rules, ...(c.rules || {}) } };
         persist("config", c, "rules");
+      }
+      // One-time gated-lift migration for stored configs that predate the QL
+      // gating build: seed rdl + goblet into legs and replace the single-arm
+      // row slot with bb-row + the bilateral chest-supported row. row-csdb
+      // leaves the plan; its sessions and records are untouched. Guarded by
+      // hadRules so a later deliberate deletion is never re-added.
+      if (!hadRules) {
+        const seedOf = (day, id) => SEED_CONFIG.days[day].find((e) => e.id === id);
+        const withInsert = (list, targetId, seeded) => {
+          if (!seeded || list.some((e) => e.id === seeded.id)) return list;
+          const i = list.findIndex((e) => e.id === targetId);
+          const next = [...list];
+          next.splice(i < 0 ? next.length : i, 0, seeded);
+          return next;
+        };
+        let legs = c.days.legs || [];
+        legs = withInsert(legs, "backext-45", seedOf("legs", "rdl"));
+        legs = withInsert(legs, "legpress", seedOf("legs", "goblet"));
+        let pull = [...(c.days.pull || [])];
+        if (!pull.some((e) => e.id === "bb-row")) {
+          const i = pull.findIndex((e) => e.id === "row-csdb");
+          pull.splice(i < 0 ? 0 : i, i < 0 ? 0 : 1, seedOf("pull", "bb-row"), seedOf("pull", "row-cs-bilat"));
+        }
+        c = { ...c, days: { ...c.days, legs, pull } };
+        persist("config", c, "gated lifts");
       }
       // Fill missing per-exercise rest durations (seed value by id, else 120 gym / 90 bodyweight).
       {
@@ -991,7 +1122,17 @@ export default function App() {
           persist("config", c, "rest timers");
         }
       }
-      const list = Array.isArray(idx) ? [...idx].sort(byDateDesc) : [];
+      let list = Array.isArray(idx) ? [...idx].sort(byDateDesc) : [];
+      // 24h QL check: the newest unanswered entry of any QL-bearing kind
+      // (legs day, gated-lift day, run, event) prompts inside the 12-120h
+      // window; older unanswered ones are dismissed so the streak reads them
+      // as misses instead of leaving them at null forever.
+      const qlPick = qlPromptPick(list, new Date());
+      if (qlPick.dismissIds.length > 0) {
+        const ids = new Set(qlPick.dismissIds);
+        list = list.map((e) => (ids.has(e.id) ? { ...e, ql: "dismissed" } : e));
+        persist("sessions-index", list, "history");
+      }
       setConfig(c);
       setIndex(list);
       if (dr && Array.isArray(dr.exercises)) {
@@ -1000,12 +1141,7 @@ export default function App() {
         if (dr.rest && dr.rest.until > Date.now()) setRest(dr.rest); // resume a running rest timer
         pushToast("Resumed in-progress workout");
       }
-      // 24h QL check: latest gym legs session, unanswered, 12h–120h old.
-      const legs = list.find((e) => e.dayType === "legs" && e.mode === "gym");
-      if (legs && legs.ql === null) {
-        const hrs = (Date.now() - new Date(legs.date).getTime()) / 3600000;
-        if (hrs >= 12 && hrs <= 120) setQlPrompt(legs);
-      }
+      if (qlPick.prompt) setQlPrompt(qlPick.prompt);
       setPhase("ready");
     })();
     return () => { alive = false; };
@@ -1041,7 +1177,14 @@ export default function App() {
       }
       const plan = (mode === "gym" ? config.days[dayType] : config.calisthenics[dayType]) || [];
       const now = new Date();
-      const exercises = plan.map((ex) => buildDraftExercise(ex, sessions, mode, { now, rules: config.rules }));
+      const exercises = plan.map((ex) =>
+        buildDraftExercise(ex, sessions, mode, {
+          now,
+          rules: config.rules,
+          gateOpen: ex.gated ? gateOpenFor(ex, index, now) : undefined,
+        })
+      );
+      applyGateSlots(exercises, index, now);
       // De-dupe the minute-resolution id so two same-minute sessions can't overwrite each other.
       let id = makeSessionId(now);
       for (let bump = 2; index.some((e) => e.id === id); bump += 1) id = `${makeSessionId(now)}-${bump}`;
@@ -1061,6 +1204,32 @@ export default function App() {
     store.remove("draft");
     pushToast("Workout discarded");
   }, [pushToast, setDraft]);
+
+  /* --- accept a gated-lift swap (offer-tap: confirm once, automatic after) --- */
+  const acceptGateSwap = useCallback((exerciseId) => {
+    setConfig((prevCfg) => {
+      const days = {};
+      DAY_KEYS.forEach((k) => {
+        days[k] = (prevCfg.days[k] || []).map((ex) => (ex.id === exerciseId ? { ...ex, gateAccepted: true } : ex));
+      });
+      const nc = { ...prevCfg, days };
+      persist("config", nc, "gate swap");
+      return nc;
+    });
+    mutateDraft((d) => {
+      const gated = d.exercises.find((e) => e.exerciseId === exerciseId);
+      if (!gated) return d;
+      const exercises = d.exercises.map((e) => {
+        if (e.exerciseId === exerciseId) return { ...e, skipped: false, gateHeld: false, gateAccepted: true };
+        if (gated.replaces === e.exerciseId && e.sets.length === 0) {
+          return { ...e, skipped: true, gateHeld: true, gateReason: `swapped out for ${gated.name}` };
+        }
+        return e;
+      });
+      return { ...d, exercises };
+    }, "now");
+    pushToast("Swapped in — automatic from now on while the gate holds", { tone: "success", ttl: 5000 });
+  }, [mutateDraft, persist, pushToast]);
 
   /* --- finish workout --- */
   const finishWorkout = useCallback(async (opts = {}) => {
@@ -1123,11 +1292,16 @@ export default function App() {
         });
       }
     }
-    const isLegsGym = d.mode === "gym" && d.dayType === "legs";
+    // QL-bearing: legs-gym (legs work is inherently QL-relevant) plus any gym
+    // session where a gated proper lift actually logged sets — the lift
+    // triggers the next-day check, not the day it ran on.
+    const needsQlCheck =
+      d.mode === "gym" &&
+      (d.dayType === "legs" || d.exercises.some((e) => e.gated && e.sets.length > 0));
     const session = {
       id: d.id, date: d.date, endDate: new Date(opts.endAt || Date.now()).toISOString(),
       dayType: d.dayType, mode: d.mode,
-      exercises: kept, qlCheck: isLegsGym ? null : undefined,
+      exercises: kept, qlCheck: needsQlCheck ? null : undefined,
       warmup, core,
     };
     const okSession = await store.set(`session:${d.id}`, session);
@@ -1149,7 +1323,7 @@ export default function App() {
       id: d.id, date: d.date, dayType: d.dayType, mode: d.mode,
       headline: headlineFor(kept), setCount: countSets(kept),
       plannedSets: plannedSets > 0 ? plannedSets : undefined,
-      ql: isLegsGym ? null : undefined,
+      ql: needsQlCheck ? null : undefined,
       pr: prNames.length > 0 || undefined,
     };
     setIndex((prev) => {
@@ -1265,6 +1439,7 @@ export default function App() {
         });
       }
     }
+    applyGateSlots(exercises, index, new Date()); // rows with restored sets are left alone
     const warmupDone = {};
     for (const w of session.warmup || []) if (w.done) warmupDone[w.id] = true;
     const coreDone = {};
@@ -1365,6 +1540,7 @@ export default function App() {
     for (let bump = 2; index.some((e) => e.id === id); bump += 1) id = `${makeSessionId(startDate)}-${bump}`;
     const session = {
       id, date: startIso, endDate: endIso, dayType: "run", mode: "run", exercises: [],
+      qlCheck: null, // runs load the QL too — next-day check applies
       run: { miles, seconds, splits: splits && splits.length ? splits : undefined, source },
     };
     const ok = await store.set(`session:${id}`, session);
@@ -1380,6 +1556,7 @@ export default function App() {
       id, date: startIso, dayType: "run", mode: "run",
       headline: runHeadline({ miles, seconds }),
       setCount: 0,
+      ql: null,
     };
     setIndex((prev) => {
       const next = [entry, ...prev.filter((e) => e.id !== id)].sort(byDateDesc);
@@ -1389,6 +1566,40 @@ export default function App() {
     setRunOverlay(null);
     pushToast(`Run saved — ${fmtW(miles)} mi in ${fmtDur(seconds)}`, { tone: "success" });
   }, [index, persist, pushToast]);
+
+  /* --- one-tap events (golf, bowling) --- */
+  // Minimal sessions whose only job is carrying the next-day QL check. They
+  // never advance the clocks or count toward week status (mode "event").
+  const logEvent = useCallback(async (eventType) => {
+    const now = new Date();
+    let id = makeSessionId(now);
+    for (let bump = 2; index.some((e) => e.id === id); bump += 1) id = `${makeSessionId(now)}-${bump}`;
+    const label = eventType === "bowling" ? "Bowling" : "Golf";
+    const session = {
+      id, date: now.toISOString(), endDate: now.toISOString(),
+      dayType: "event", mode: "event", eventType, exercises: [], qlCheck: null,
+    };
+    const ok = await store.set(`session:${id}`, session);
+    if (!ok) {
+      pushToast("Couldn't save the event", {
+        tone: "error",
+        action: { label: "Retry", fn: () => logEvent(eventType) },
+      });
+      return;
+    }
+    sessionCache.current.set(id, session);
+    const entry = { id, date: session.date, dayType: "event", mode: "event", headline: label, setCount: 0, ql: null };
+    setIndex((prev) => {
+      const next = [entry, ...prev.filter((e) => e.id !== id)].sort(byDateDesc);
+      persist("sessions-index", next, "history");
+      return next;
+    });
+    pushToast(`${label} logged — QL check tomorrow`, {
+      tone: "success",
+      ttl: 6000,
+      action: { label: "Undo", fn: () => deleteSession(id) },
+    });
+  }, [deleteSession, index, persist, pushToast]);
 
   /* --- body-weight log --- */
   // One entry per calendar day (the id IS the local day), so re-logging a day updates it.
@@ -1458,9 +1669,11 @@ export default function App() {
           draft ? (
             <LoggingScreen
               draft={draft}
+              index={index}
               mutateDraft={mutateDraft}
               onFinish={finishWorkout}
               onDiscard={discardDraft}
+              onAcceptGate={acceptGateSwap}
               mobility={config.mobility}
               pushToast={pushToast}
               onSetLogged={onSetLogged}
@@ -1481,6 +1694,7 @@ export default function App() {
               dismissJustFinished={() => setJustFinished(null)}
               pushToast={pushToast}
               onRun={setRunOverlay}
+              onLogEvent={logEvent}
             />
           )
         )}
@@ -1629,7 +1843,7 @@ export function runSuggestion(index, nextDay, now = new Date()) {
   return { kind: "go", label: `Run today — ${runs7 + 1} of ${RUN_WEEKLY_TARGET} this week` };
 }
 
-function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, starting, qlPrompt, answerQl, justFinished, dismissJustFinished, pushToast, onRun }) {
+function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, starting, qlPrompt, answerQl, justFinished, dismissJustFinished, pushToast, onRun, onLogEvent }) {
   const [armedDay, setArmedDay] = useState(null);
   // Clock-based scheduling: suggest whichever bucket is stalest (any lifting
   // mode — a travel day resets its clock just like a gym day). Runs and
@@ -1663,7 +1877,7 @@ function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, startin
             <AlertTriangle size={18} className="mt-1 shrink-0 text-amber-400" />
             <div className="flex-1">
               <div className="text-sm font-semibold text-zinc-100">
-                Legs day {shortDate(qlPrompt.date)} — how's the right QL today?
+                {qlPromptText(qlPrompt)}
               </div>
               <div className="mt-3 flex gap-2">
                 <button
@@ -1723,6 +1937,7 @@ function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, startin
                 </div>
                 <div className="text-xs tabular-nums text-zinc-500">last 4 weeks: {ws.last4.join("/")}</div>
               </div>
+              <div className="mt-1 text-xs tabular-nums text-zinc-500">QL streak: {qlStreak(index)}</div>
             </div>
             {showSplit && (
               <div className="rounded-2xl border border-amber-400/40 bg-zinc-900 p-4">
@@ -1844,6 +2059,29 @@ function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, startin
             </div>
           );
         })()}
+
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-zinc-100">Log event</div>
+              <div className="text-xs text-zinc-500">Counts for the QL check, not the split</div>
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <button
+                onClick={() => onLogEvent("golf")}
+                className={`h-11 rounded-xl bg-zinc-800 px-4 text-sm font-semibold text-zinc-200 active:bg-zinc-700 ${TRANS}`}
+              >
+                ⛳ Golf
+              </button>
+              <button
+                onClick={() => onLogEvent("bowling")}
+                className={`h-11 rounded-xl bg-zinc-800 px-4 text-sm font-semibold text-zinc-200 active:bg-zinc-700 ${TRANS}`}
+              >
+                🎳 Bowling
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       {index.length === 0 && (
@@ -1857,7 +2095,7 @@ function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, startin
 
 /* ---------- logging ---------- */
 
-function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility, pushToast, onSetLogged, restActive }) {
+function LoggingScreen({ draft, index, mutateDraft, onFinish, onDiscard, onAcceptGate, mobility, pushToast, onSetLogged, restActive }) {
   const [armedDiscard, setArmedDiscard] = useArmed();
   const [armedFinish, setArmedFinish] = useArmed(3600);
   const [finishing, setFinishing] = useState(false);
@@ -1942,8 +2180,32 @@ function LoggingScreen({ draft, mutateDraft, onFinish, onDiscard, mobility, push
         </button>
       )}
 
+      {draft.mode === "gym" && (() => {
+        // Gate status strip: one line per gated slot on this day + the shared streak.
+        const slots = draft.exercises.filter((e) => e.gated);
+        if (slots.length === 0) return null;
+        const streak = qlStreak(index || []);
+        return (
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900 px-4 py-3">
+            {slots.map((s) => {
+              const active = !s.skipped;
+              const offer = s.skipped && s.gateOpen && !s.gateAccepted;
+              return (
+                <div key={s.exerciseId} className="flex items-center justify-between gap-2 py-0.5 text-xs">
+                  <span className="font-semibold text-zinc-200">{s.name}</span>
+                  <span className={active ? "text-lime-300" : offer ? "text-lime-300" : "text-amber-300"}>
+                    {active ? "in — QL gate passed" : offer ? "gate open — swap in below" : `held — ${s.gateReason || "QL gate"}`}
+                  </span>
+                </div>
+              );
+            })}
+            <div className="pt-1 text-xs text-zinc-500">QL streak: {streak}</div>
+          </div>
+        );
+      })()}
+
       {draft.exercises.map((ex, i) => (
-        <ExerciseCard key={ex.exerciseId} ex={ex} idx={i} count={draft.exercises.length} mode={draft.mode} mutateDraft={mutateDraft} onSetLogged={onSetLogged} pushToast={pushToast} />
+        <ExerciseCard key={ex.exerciseId} ex={ex} idx={i} count={draft.exercises.length} mode={draft.mode} mutateDraft={mutateDraft} onSetLogged={onSetLogged} onAcceptGate={onAcceptGate} pushToast={pushToast} />
       ))}
 
       {coreItems.length > 0 && (
@@ -2132,6 +2394,8 @@ function buildDraftExercise(ex, sessions, mode, opts = {}) {
     increment: ex.increment || 0, targetSets: ex.sets || 3, current: ex.current ?? null,
     restSec: ex.restSec || (mode === "gym" ? 120 : 90),
     warmupRamp: !!ex.warmupRamp,
+    gated: !!ex.gated, gateStreak: ex.gateStreak || 0, replaces: ex.replaces || null,
+    gateAccepted: !!ex.gateAccepted, gateHeld: false,
     exNote: ex.note || "", fallback: ex.fallback || "",
     lastPerf, suggestion, acceptedTarget: null,
     sets: [], note: "", skipped: false, pending,
@@ -2174,7 +2438,7 @@ function patchExercise(draft, idx, patch) {
   return { ...draft, exercises };
 }
 
-function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, pushToast }) {
+function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, onAcceptGate, pushToast }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(!!ex.note);
 
@@ -2250,12 +2514,29 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, pushToas
   };
 
   if (ex.skipped) {
+    const offer = ex.gated && ex.gateOpen && !ex.gateAccepted;
     return (
-      <div className="flex items-center justify-between rounded-2xl border border-zinc-800 bg-zinc-950 px-4 py-3">
-        <div className="text-sm text-zinc-600 line-through">{ex.name}</div>
-        <button onClick={toggleSkip} className="flex h-11 items-center gap-1 rounded-lg px-3 text-xs font-semibold text-zinc-400 active:text-zinc-200">
-          <RotateCcw size={14} /> Undo skip
-        </button>
+      <div className="flex items-center justify-between gap-2 rounded-2xl border border-zinc-800 bg-zinc-950 px-4 py-3">
+        <div className="min-w-0">
+          <div className={`text-sm ${offer ? "font-semibold text-zinc-200" : "text-zinc-600 line-through"}`}>{ex.name}</div>
+          {ex.gateHeld && ex.gateReason ? (
+            <div className={`mt-0.5 text-xs ${offer ? "text-lime-300" : "text-zinc-500"}`}>
+              {offer ? `QL gate open — ${ex.gateReason}` : `Held — ${ex.gateReason}`}
+            </div>
+          ) : null}
+        </div>
+        {offer ? (
+          <button
+            onClick={() => onAcceptGate && onAcceptGate(ex.exerciseId)}
+            className={`h-11 shrink-0 rounded-xl bg-lime-400 px-4 text-xs font-bold text-black active:bg-lime-300 ${TRANS}`}
+          >
+            Swap in
+          </button>
+        ) : (
+          <button onClick={toggleSkip} className="flex h-11 shrink-0 items-center gap-1 rounded-lg px-3 text-xs font-semibold text-zinc-400 active:text-zinc-200">
+            <RotateCcw size={14} /> Undo skip
+          </button>
+        )}
       </div>
     );
   }
@@ -2462,7 +2743,7 @@ function HistoryScreen({ index, onOpen }) {
                   {e.ql === "worse" && <span title="QL worse" className="h-2 w-2 rounded-full bg-red-500" />}
                 </div>
                 <div className="truncate text-xs text-zinc-500">
-                  {e.dayType === "run"
+                  {e.dayType === "run" || e.mode === "event"
                     ? (e.headline || "—")
                     : `${e.headline || "—"} · ${e.setCount}${e.plannedSets > 0 ? `/${e.plannedSets}` : ""} sets`}
                 </div>
@@ -2595,14 +2876,14 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, onR
               {s && (
                 <>
                   <div className="truncate text-base font-bold">
-                    {DAY_LABEL[s.dayType] || s.dayType}
+                    {s.mode === "event" ? (s.eventType === "bowling" ? "Bowling" : "Golf") : DAY_LABEL[s.dayType] || s.dayType}
                     {s.mode === "calisthenics" && <span className="ml-2 rounded bg-zinc-800 px-2 py-1 text-xs font-semibold text-zinc-300">BW</span>}
                   </div>
                   <div className="text-xs text-zinc-500">{fullDate(s.date)}</div>
                 </>
               )}
             </div>
-            {s && !editing && (
+            {s && !editing && s.mode !== "event" && (
               <button onClick={startEdit} className="flex h-11 items-center gap-1 rounded-xl bg-zinc-800 px-3 text-sm font-semibold text-zinc-200 active:bg-zinc-700">
                 <Pencil size={14} /> Edit
               </button>
@@ -2842,7 +3123,7 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, onR
               );
             })()}
 
-            {!editing && !s.run && (
+            {!editing && !s.run && s.mode !== "event" && (
               <button
                 onClick={() => { if (!hasDraft || armedReopen) onReopen(s); else setArmedReopen(true); }}
                 className={`flex h-12 items-center justify-center gap-2 rounded-2xl border text-sm font-semibold ${TRANS} ${
@@ -2854,7 +3135,7 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, onR
               </button>
             )}
 
-            {!editing && !s.run && <HealthLogButton session={s} pushToast={pushToast} />}
+            {!editing && !s.run && s.mode !== "event" && <HealthLogButton session={s} pushToast={pushToast} />}
 
             {!editing && (
               <button
