@@ -133,6 +133,11 @@ export const SEED_CONFIG = {
       ],
     },
   },
+  // Frequency / gating thresholds. Stored in config so they sync to the sheet
+  // and can be hand-tuned; missing keys are backfilled from here at boot.
+  rules: {
+    staleDays: 8, // a muscle bucket this many days old is "stale" and jumps the queue
+  },
   days: {
     push: [
       { id: "bench-db", name: "DB Bench Press", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 70, restSec: 120, warmupRamp: true },
@@ -423,6 +428,65 @@ export function findRecentPerfs(sessions, exerciseId, limit = 4) {
 
 export function findLastPerf(sessions, exerciseId) {
   return findRecentPerfs(sessions, exerciseId, 1)[0] || null;
+}
+
+/* ---------- frequency clocks: which day is next (exported for tests) ---------- */
+
+// Lifting sessions drive the clocks; runs and events sit outside them.
+export const isLiftEntry = (e) => !!e && e.mode !== "run" && e.mode !== "event";
+
+// Calendar-day difference in local time, so "day 11" flips at midnight the way
+// a person counts it. (daysAgo() elsewhere uses 24h blocks; the clocks can't —
+// upper-vs-push tie-breaking relies on same-day sessions tying exactly.)
+export function calDaysBetween(iso, now = new Date()) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return Infinity;
+  const from = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const to = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((to.getTime() - from.getTime()) / 86400000);
+}
+
+const BUCKET_COVERS = { push: ["push"], pull: ["pull"], legs: ["legs"], upper: ["push", "pull"] };
+
+/* Three clocks — push, pull, legs — each reading days since that bucket was
+   last trained (an Upper day resets both push and pull). The suggestion is
+   whichever candidate clears the oldest clock; `upper` is a candidate only
+   when push and pull are BOTH stale, valued at max(age.push, age.pull).
+   Trained every 2-3 days this reproduces PPL with no rotation state; after a
+   layoff it self-heals stalest-first; at ~2x/week it settles into Legs/Upper.
+   Ties: legs > upper > push > pull. Upper's value always equals the staler of
+   push/pull, so it must outrank them to ever fire; legs outranks upper so a
+   fully stale board clears the legs clock first. */
+export function pickNextDay(index, now = new Date(), rules) {
+  const staleDays = Number(rules && rules.staleDays) > 0 ? Number(rules.staleDays) : 8;
+  const age = { push: Infinity, pull: Infinity, legs: Infinity };
+  for (const e of index) {
+    if (!isLiftEntry(e)) continue;
+    const covers = BUCKET_COVERS[e.dayType];
+    if (!covers) continue;
+    const d = calDaysBetween(e.date, now);
+    for (const b of covers) if (d < age[b]) age[b] = d;
+  }
+  if (DAY_KEYS.every((b) => age[b] === Infinity)) {
+    return { day: "push", reason: "rotation", age }; // empty history: PPL starts at Push
+  }
+  const stale = DAY_KEYS.filter((b) => age[b] >= staleDays);
+  const candidates = DAY_KEYS.map((b) => ({ day: b, clears: age[b] }));
+  if (age.push >= staleDays && age.pull >= staleDays) {
+    candidates.push({ day: "upper", clears: Math.max(age.push, age.pull) });
+  }
+  const RANK = { pull: 0, push: 1, upper: 2, legs: 3 };
+  candidates.sort((a, b) => (a.clears === b.clears ? RANK[b.day] - RANK[a.day] : b.clears - a.clears));
+  return { day: candidates[0].day, reason: stale.length > 0 ? "stale" : "rotation", age };
+}
+
+// One-line explanation for the home screen.
+export function nextDayReason(pick) {
+  if (pick.reason !== "stale") return "Next in rotation";
+  if (pick.day === "upper") return "Push + pull both stale — Upper covers both";
+  const n = pick.age[pick.day];
+  if (n === Infinity) return `Stale — ${DAY_LABEL[pick.day].toLowerCase()} never logged`;
+  return `Stale — ${n} day${n === 1 ? "" : "s"} since ${DAY_LABEL[pick.day].toLowerCase()}`;
 }
 
 function setVolume(set, unilateral) {
@@ -836,6 +900,11 @@ export default function App() {
         // Older stored configs predate this warm-up/core routine — replace with the seed.
         c = { ...c, mobility: SEED_CONFIG.mobility };
         persist("config", c, "warm-ups");
+      }
+      // Backfill missing frequency/gating thresholds (new keys arrive over time).
+      if (!c.rules || Object.keys(SEED_CONFIG.rules).some((k) => c.rules[k] === undefined)) {
+        c = { ...c, rules: { ...SEED_CONFIG.rules, ...(c.rules || {}) } };
+        persist("config", c, "rules");
       }
       // Fill missing per-exercise rest durations (seed value by id, else 120 gym / 90 bodyweight).
       {
@@ -1329,6 +1398,7 @@ export default function App() {
             />
           ) : (
             <HomeScreen
+              config={config}
               index={index}
               mode={homeMode}
               setMode={setHomeMode}
@@ -1450,8 +1520,6 @@ function TabBar({ tab, setTab, hasDraft }) {
 
 /* ---------- home ---------- */
 
-const NEXT_IN_ROTATION = { push: "pull", pull: "legs", legs: "push" };
-
 /* "Run okay" chip (exported for tests). Suggest a run today only when ALL hold:
    1. legs isn't up next (a run today shouldn't land within a day of legs;
       nextDay already ignores run entries),
@@ -1490,13 +1558,19 @@ export function runSuggestion(index, nextDay, now = new Date()) {
   return { kind: "go", label: `Run today — ${runs7 + 1} of ${RUN_WEEKLY_TARGET} this week` };
 }
 
-function HomeScreen({ index, mode, setMode, onStart, starting, qlPrompt, answerQl, justFinished, dismissJustFinished, pushToast, onRun }) {
+function HomeScreen({ config, index, mode, setMode, onStart, starting, qlPrompt, answerQl, justFinished, dismissJustFinished, pushToast, onRun }) {
   const [armedDay, setArmedDay] = useState(null);
-  // PPL rotation: whatever came after the most recent lift day (any mode —
-  // a travel day advances the split just like a gym day). Runs sit outside
-  // the rotation and don't advance it.
-  const lastLift = index.find((e) => NEXT_IN_ROTATION[e.dayType]);
-  const nextDay = lastLift ? NEXT_IN_ROTATION[lastLift.dayType] : "push";
+  // Clock-based scheduling: suggest whichever bucket is stalest (any lifting
+  // mode — a travel day resets its clock just like a gym day). Runs and
+  // events sit outside the clocks.
+  const pick = pickNextDay(index, new Date(), config && config.rules);
+  const nextDay = pick.day;
+  const dayCountLabel = (day) => {
+    const n = pick.age[day];
+    if (n === Infinity) return "· never";
+    if (n === 0) return "· today";
+    return `· day ${n}`;
+  };
   useEffect(() => {
     if (!armedDay) return undefined;
     const t = setTimeout(() => setArmedDay(null), 2600);
@@ -1592,6 +1666,7 @@ function HomeScreen({ index, mode, setMode, onStart, starting, qlPrompt, answerQ
                 <div>
                   <div className="flex items-center gap-2">
                     <div className="text-2xl font-bold">{DAY_LABEL[day]}</div>
+                    <span className="text-sm font-semibold tabular-nums text-zinc-500">{dayCountLabel(day)}</span>
                     {day === nextDay && (
                       <span className="rounded bg-lime-400 px-1.5 text-xs font-bold text-black">Up next</span>
                     )}
@@ -1599,6 +1674,11 @@ function HomeScreen({ index, mode, setMode, onStart, starting, qlPrompt, answerQ
                   <div className="mt-1 text-xs text-zinc-500">
                     {last ? `${daysAgo(last.date)} · ${last.headline || `${last.setCount} sets`}` : "Never logged — start here"}
                   </div>
+                  {day === nextDay && (
+                    <div className={`mt-1 text-xs font-semibold ${pick.reason === "stale" ? "text-amber-300" : "text-lime-400"}`}>
+                      {nextDayReason(pick)}
+                    </div>
+                  )}
                 </div>
                 <div className={`flex h-12 w-12 items-center justify-center rounded-full bg-lime-400 text-black ${TRANS}`}>
                   {starting ? <Loader2 size={22} className="animate-spin motion-reduce:animate-none" /> : <Dumbbell size={22} />}
