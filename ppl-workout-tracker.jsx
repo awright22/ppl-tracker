@@ -139,6 +139,8 @@ export const SEED_CONFIG = {
     staleDays: 8, // a muscle bucket this many days old is "stale" and jumps the queue
     returnAfterDays: 17, // exercise untouched this long -> "back from break" restart at 85/90%
     holdAfterDays: 12, // exercise untouched this long -> a would-be bump becomes a hold
+    deloadEveryWeeks: 6, // consecutive >=2-lift weeks before a scheduled deload week is offered
+    // deloadWeekOf ("YYYY-MM-DD" Monday) is stamped at runtime when one starts.
   },
   days: {
     push: [
@@ -662,6 +664,49 @@ export function applyGateSlots(exercises, index, now = new Date()) {
     }
   }
   return exercises;
+}
+
+/* ---------- scheduled deload week (exported for tests) ---------- */
+
+// Is d inside the stamped deload week? The stamp is that week's Monday as a
+// local "YYYY-MM-DD"; it expires by date comparison and is never cleared —
+// afterwards it serves as the counter's reset marker.
+export function inDeloadWeek(rules, d = new Date()) {
+  const stamp = rules && rules.deloadWeekOf;
+  if (!stamp) return false;
+  const ws = weekStartOf(d);
+  return stamp === `${ws.getFullYear()}-${pad2(ws.getMonth() + 1)}-${pad2(ws.getDate())}`;
+}
+
+/* Counter of consecutive Mon-Sun weeks with >= 2 lifting sessions since the
+   last reset. Resets on a completed deload week or any completed week with
+   <= 1 lift — an under-floor week is a de facto deload, so a stop-start
+   month never stacks toward another one. The in-progress week joins the
+   count once it already has >= 2 lifts. Due when the counter reaches
+   rules.deloadEveryWeeks (and no deload week is currently active). */
+export function deloadDue(index, rules, now = new Date()) {
+  const every = Number(rules && rules.deloadEveryWeeks) > 0 ? Number(rules.deloadEveryWeeks) : 6;
+  const stamp = (rules && rules.deloadWeekOf) || null;
+  const anchor = weekStartOf(now);
+  const keyOf = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const active = stamp === keyOf(anchor);
+  const liftsIn = (start) => {
+    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7);
+    return index.filter((e) => {
+      if (!isLiftEntry(e)) return false;
+      const t = new Date(e.date);
+      return t >= start && t < end;
+    }).length;
+  };
+  let weeks = 0;
+  if (!active && liftsIn(anchor) >= 2) weeks += 1;
+  for (let k = 1; k <= 104; k += 1) {
+    const start = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() - 7 * k);
+    if (stamp === keyOf(start)) break; // completed deload week
+    if (liftsIn(start) >= 2) weeks += 1;
+    else break; // under-floor week = de facto deload
+  }
+  return { weeks, due: !active && weeks >= every, active };
 }
 
 /* ---------- Upper template + cross-day history lookup (exported for tests) ---------- */
@@ -1265,6 +1310,7 @@ export default function App() {
           now,
           rules: config.rules,
           gateOpen: ex.gated ? gateOpenFor(ex, index, now) : undefined,
+          deloadWeek: inDeloadWeek(config.rules, now),
         })
       );
       applyGateSlots(exercises, index, now);
@@ -1419,7 +1465,10 @@ export default function App() {
     // change) becomes the new `current` once it was actually lifted. Each
     // exercise writes through to wherever its config entry lives, so an Upper
     // session updates days.push / days.pull (there is no days.upper).
-    if (d.mode === "gym") {
+    // Critical deload guard: sessions dated inside the stamped deload week
+    // never write — otherwise the 90% loads overwrite real working weights
+    // and wreck progression on resume.
+    if (d.mode === "gym" && !inDeloadWeek(config && config.rules, new Date(d.date))) {
       setConfig((prevCfg) => {
         let changed = false;
         const bumpEx = (cfgEx) => {
@@ -1506,7 +1555,11 @@ export default function App() {
       sessionsByEx.set(ex.id, list);
     }
     const exercises = plan.map((ex) => {
-      const de = buildDraftExercise(ex, sessionsByEx.get(ex.id) || [], mode, { now: new Date(), rules: config.rules });
+      const de = buildDraftExercise(ex, sessionsByEx.get(ex.id) || [], mode, {
+        now: new Date(),
+        rules: config.rules,
+        deloadWeek: inDeloadWeek(config.rules, new Date(session.date)), // the session's own week
+      });
       const logged = (session.exercises || []).find((se) => se.exerciseId === ex.id);
       if (logged && logged.sets && logged.sets.length) {
         de.sets = logged.sets;
@@ -1663,6 +1716,18 @@ export default function App() {
     pushToast(`Run saved — ${fmtW(miles)} mi in ${fmtDur(seconds)}`, { tone: "success" });
   }, [index, persist, pushToast]);
 
+  /* --- scheduled deload week --- */
+  const startDeloadWeek = useCallback(() => {
+    setConfig((prev) => {
+      const ws = weekStartOf(new Date());
+      const stamp = `${ws.getFullYear()}-${pad2(ws.getMonth() + 1)}-${pad2(ws.getDate())}`;
+      const nc = { ...prev, rules: { ...(prev.rules || {}), deloadWeekOf: stamp } };
+      persist("config", nc, "deload week");
+      return nc;
+    });
+    pushToast("Deload week on — gym drafts pre-set to 2×@90% through Sunday", { tone: "success", ttl: 6000 });
+  }, [persist, pushToast]);
+
   /* --- one-tap events (golf, bowling) --- */
   // Minimal sessions whose only job is carrying the next-day QL check. They
   // never advance the clocks or count toward week status (mode "event").
@@ -1791,6 +1856,7 @@ export default function App() {
               pushToast={pushToast}
               onRun={setRunOverlay}
               onLogEvent={logEvent}
+              onStartDeload={startDeloadWeek}
             />
           )
         )}
@@ -1804,7 +1870,7 @@ export default function App() {
           <WeightScreen config={config} weights={weights} onLog={logWeight} onDelete={deleteWeight} />
         )}
         {tab === "settings" && (
-          <SettingsScreen config={config} saveConfig={saveConfig} themeKey={themeKey} />
+          <SettingsScreen config={config} saveConfig={saveConfig} themeKey={themeKey} index={index} onStartDeload={startDeloadWeek} />
         )}
       </div>
 
@@ -1939,7 +2005,7 @@ export function runSuggestion(index, nextDay, now = new Date()) {
   return { kind: "go", label: `Run today — ${runs7 + 1} of ${RUN_WEEKLY_TARGET} this week` };
 }
 
-function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, starting, qlPrompt, answerQl, justFinished, dismissJustFinished, pushToast, onRun, onLogEvent }) {
+function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, starting, qlPrompt, answerQl, justFinished, dismissJustFinished, pushToast, onRun, onLogEvent, onStartDeload }) {
   const [armedDay, setArmedDay] = useState(null);
   // Clock-based scheduling: suggest whichever bucket is stalest (any lifting
   // mode — a travel day resets its clock just like a gym day). Runs and
@@ -2054,6 +2120,47 @@ function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, startin
               </div>
             )}
           </>
+        );
+      })()}
+
+      {(() => {
+        const dl = deloadDue(index, config && config.rules, new Date());
+        if (dl.active) {
+          return (
+            <div className="rounded-2xl border border-lime-400/40 bg-zinc-900 px-4 py-3 text-sm text-zinc-200">
+              <span className="font-semibold text-lime-300">Deload week</span> — gym sessions pre-set to 2×@90%. Loads
+              resume unchanged next week.
+            </div>
+          );
+        }
+        const dismissedAt = (config && config.ui && config.ui.deloadDismissedAt) || 0;
+        if (!dl.due || dismissedAt >= weekStartOf(new Date()).getTime()) return null;
+        return (
+          <div className="rounded-2xl border border-amber-400/40 bg-zinc-900 p-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle size={18} className="mt-1 shrink-0 text-amber-400" />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold text-zinc-100">
+                  Deload week due — {dl.weeks} training weeks since the last one
+                </div>
+                <div className="mt-3">
+                  <button
+                    onClick={onStartDeload}
+                    className={`h-11 w-full rounded-xl bg-lime-400 text-sm font-bold text-black active:bg-lime-300 ${TRANS}`}
+                  >
+                    Start deload week — 2×@90%
+                  </button>
+                </div>
+              </div>
+              <button
+                aria-label="dismiss deload offer"
+                onClick={() => saveConfig({ ...config, ui: { ...(config.ui || {}), deloadDismissedAt: Date.now() } })}
+                className="flex h-11 w-11 shrink-0 items-center justify-center text-zinc-500"
+              >
+                <X size={18} />
+              </button>
+            </div>
+          </div>
         );
       })()}
 
@@ -2488,11 +2595,15 @@ function MobilityScreen({ title, subtitle, sections, doneLabel, done, onToggle, 
 }
 
 // Build one draft exercise from a config exercise + recent sessions (newest first).
-// opts flows to computeSuggestion: { now, rules, gateOpen }.
+// opts flows to computeSuggestion: { now, rules, gateOpen }. opts.deloadWeek
+// puts gym drafts in deload mode: 2 sets pre-filled at 90%, no bump/build.
 function buildDraftExercise(ex, sessions, mode, opts = {}) {
   const perfs = findRecentPerfs(sessions, ex.id, 4);
   const lastPerf = perfs[0] || null;
-  const suggestion = mode === "gym" ? computeSuggestion(ex, perfs, opts) : null;
+  const deload = !!opts.deloadWeek && mode === "gym";
+  const suggestion = deload
+    ? { kind: "deload-week", label: "Deload — 2×@90%" }
+    : mode === "gym" ? computeSuggestion(ex, perfs, opts) : null;
   const firstSet = lastPerf && lastPerf.sets[0];
   const defR = (side) => {
     if (firstSet) {
@@ -2503,14 +2614,18 @@ function buildDraftExercise(ex, sessions, mode, opts = {}) {
     return ex.repMax || 10;
   };
   const pending = {};
-  if (mode === "gym") pending.weight = ex.current;
+  if (mode === "gym") {
+    pending.weight = deload && Number(ex.current) > 0
+      ? roundToIncrement(ex.current * 0.9, ex.increment, ex.current)
+      : ex.current;
+  }
   if (ex.unilateral) { pending.repsL = defR("repsL"); pending.repsR = defR("repsR"); }
   else pending.reps = defR();
   return {
     exerciseId: ex.id, name: ex.name,
     unilateral: !!ex.unilateral, timed: !!ex.timed, amrap: !!ex.amrap, needsBar: !!ex.needsBar,
     loadType: ex.loadType || null, repMin: ex.repMin ?? null, repMax: ex.repMax ?? null,
-    increment: ex.increment || 0, targetSets: ex.sets || 3, current: ex.current ?? null,
+    increment: ex.increment || 0, targetSets: deload ? 2 : ex.sets || 3, current: ex.current ?? null,
     restSec: ex.restSec || (mode === "gym" ? 120 : 90),
     warmupRamp: !!ex.warmupRamp,
     gated: !!ex.gated, gateStreak: ex.gateStreak || 0, replaces: ex.replaces || null,
@@ -2734,7 +2849,13 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, onAccept
                     : <><ChevronDown size={14} /> {sug.label}</>}
             </button>
           ) : (
-            <span className={`${chipBase} border ${sug.kind === "build" || sug.stale ? "border-amber-400/60 text-amber-300" : "border-zinc-700 text-zinc-400"}`}>
+            <span className={`${chipBase} border ${
+              sug.kind === "deload-week"
+                ? "border-lime-400/50 text-lime-300"
+                : sug.kind === "build" || sug.stale
+                  ? "border-amber-400/60 text-amber-300"
+                  : "border-zinc-700 text-zinc-400"
+            }`}>
               {sug.label}
             </span>
           )
@@ -4091,7 +4212,7 @@ function WeightScreen({ config, weights, onLog, onDelete }) {
 
 /* ---------- settings ---------- */
 
-function SettingsScreen({ config, saveConfig, themeKey }) {
+function SettingsScreen({ config, saveConfig, themeKey, index, onStartDeload }) {
   const [mode, setMode] = useState("gym");
   const [day, setDay] = useState("push");
   const [editingId, setEditingId] = useState(null);
@@ -4172,6 +4293,38 @@ function SettingsScreen({ config, saveConfig, themeKey }) {
           A workout with no activity for 3 hours finishes itself (or is discarded if nothing was logged).
         </div>
       </div>
+
+      {(() => {
+        const dl = deloadDue(index || [], config.rules, new Date());
+        return (
+          <div className="flex flex-col gap-2">
+            <div className="px-1 text-xs font-semibold uppercase tracking-widest text-zinc-500">Deload</div>
+            <div className="flex items-center justify-between gap-3 rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-zinc-100">Deload week</div>
+                <div className="text-xs text-zinc-500">
+                  {dl.active
+                    ? "Active through Sunday — gym drafts at 2×@90%"
+                    : `${dl.weeks} training week${dl.weeks === 1 ? "" : "s"} since the last one`}
+                </div>
+              </div>
+              <button
+                disabled={dl.active}
+                onClick={onStartDeload}
+                className={`h-11 shrink-0 rounded-xl px-4 text-sm font-bold ${TRANS} ${
+                  dl.active ? "bg-zinc-800 text-zinc-500" : "bg-lime-400 text-black active:bg-lime-300"
+                }`}
+              >
+                {dl.active ? "Active" : "Start now"}
+              </button>
+            </div>
+            <div className="px-1 text-xs text-zinc-600">
+              Feeling cooked before the {(config.rules && config.rules.deloadEveryWeeks) || 6}-week card shows? Start it
+              here — same week, same rules. Working weights are never overwritten by deload sessions.
+            </div>
+          </div>
+        );
+      })()}
 
       <Seg value={mode} onChange={(v) => { setMode(v); setEditingId(null); }} options={[{ value: "gym", label: "Gym" }, { value: "calisthenics", label: "Bodyweight" }]} />
       <Seg value={day} onChange={(v) => { setDay(v); setEditingId(null); }} options={DAY_KEYS.map((d) => ({ value: d, label: DAY_LABEL[d] }))} />

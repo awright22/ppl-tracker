@@ -586,6 +586,74 @@ section("weightStall");
   });
 }
 
+/* ================= Task 7: scheduled deload week ================= */
+
+section("deloadDue + inDeloadWeek");
+{
+  const now = at(2026, 8, 31, 9); // Monday 31 Aug
+  // Build n lifts inside the week starting on the given Monday.
+  const week = (y, m, d, n) =>
+    Array.from({ length: n }, (_, i) => lift(["push", "pull", "legs"][i % 3], iso(y, m, d + i * 2)));
+  // Six full training weeks: Mondays Jul 20 .. Aug 24.
+  const sixWeeks = [
+    ...week(2026, 8, 24, 3), ...week(2026, 8, 17, 3), ...week(2026, 8, 10, 3),
+    ...week(2026, 8, 3, 3), ...week(2026, 7, 27, 3), ...week(2026, 7, 20, 3),
+  ];
+
+  test("six consecutive >=2-lift weeks: due", () => {
+    const dl = T.deloadDue(sixWeeks, { deloadEveryWeeks: 6 }, now);
+    assert.equal(dl.weeks, 6);
+    assert.equal(dl.due, true);
+    assert.equal(dl.active, false);
+  });
+  test("an under-floor week resets the counter (stop-start never stacks)", () => {
+    const idx = [...week(2026, 8, 24, 3), ...week(2026, 8, 17, 2), ...week(2026, 8, 10, 1), ...week(2026, 8, 3, 3)];
+    const dl = T.deloadDue(idx, { deloadEveryWeeks: 6 }, now);
+    assert.equal(dl.weeks, 2);
+    assert.equal(dl.due, false);
+  });
+  test("a completed deload week resets the counter even if it had lifts", () => {
+    const dl = T.deloadDue(sixWeeks, { deloadEveryWeeks: 6, deloadWeekOf: "2026-08-10" }, now);
+    assert.equal(dl.weeks, 2); // Aug 24 + Aug 17 only
+    assert.equal(dl.due, false);
+  });
+  test("the in-progress week joins once it has >=2 lifts", () => {
+    const idx = [...week(2026, 8, 31, 2), ...week(2026, 8, 24, 3)];
+    assert.equal(T.deloadDue(idx, { deloadEveryWeeks: 6 }, now).weeks, 2);
+    const one = [...week(2026, 8, 31, 1), ...week(2026, 8, 24, 3)];
+    assert.equal(T.deloadDue(one, { deloadEveryWeeks: 6 }, now).weeks, 1);
+  });
+  test("active deload week: never due, flagged active", () => {
+    const dl = T.deloadDue(sixWeeks, { deloadEveryWeeks: 6, deloadWeekOf: "2026-08-31" }, now);
+    assert.equal(dl.active, true);
+    assert.equal(dl.due, false);
+  });
+  test("deloadEveryWeeks override honored", () => {
+    const idx = [...week(2026, 8, 24, 3), ...week(2026, 8, 17, 3), ...week(2026, 8, 10, 3), ...week(2026, 8, 3, 3)];
+    assert.equal(T.deloadDue(idx, { deloadEveryWeeks: 4 }, now).due, true);
+    assert.equal(T.deloadDue(idx, { deloadEveryWeeks: 6 }, now).due, false);
+  });
+  test("runs and events never feed the counter", () => {
+    const idx = [
+      run(iso(2026, 8, 25)), run(iso(2026, 8, 27)),
+      { id: "ev", date: iso(2026, 8, 26), dayType: "event", mode: "event", ql: null },
+    ];
+    assert.equal(T.deloadDue(idx, { deloadEveryWeeks: 6 }, now).weeks, 0);
+  });
+  test("inDeloadWeek matches only the stamped week", () => {
+    const rules = { deloadWeekOf: "2026-08-31" };
+    assert.equal(T.inDeloadWeek(rules, at(2026, 8, 31, 8)), true);
+    assert.equal(T.inDeloadWeek(rules, at(2026, 9, 6, 23)), true); // Sunday of the same week
+    assert.equal(T.inDeloadWeek(rules, at(2026, 9, 7, 1)), false); // next Monday: expired
+    assert.equal(T.inDeloadWeek({}, at(2026, 8, 31)), false);
+  });
+  test("deload pending weight math: 90% snapped, never a no-op", () => {
+    assert.equal(T.roundToIncrement(385 * 0.9, 10, 385), 350);
+    assert.equal(T.roundToIncrement(50 * 0.9, 5, 50), 45);
+    assert.equal(T.roundToIncrement(17.5 * 0.9, 2.5, 17.5), 15);
+  });
+}
+
 /* ================= summary ================= */
 
 console.log(`\n${passed} passed, ${failed} failed`);
