@@ -480,6 +480,39 @@ export function pickNextDay(index, now = new Date(), rules) {
   return { day: candidates[0].day, reason: stale.length > 0 ? "stale" : "rotation", age };
 }
 
+/* ---------- week status: Mon-Sun frequency accounting (exported for tests) ---------- */
+
+// Local-midnight Monday of the week containing d.
+export function weekStartOf(d) {
+  const dow = (d.getDay() + 6) % 7; // Mon=0 … Sun=6
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - dow);
+}
+
+/* Lifting sessions per Mon-Sun week, current week last in `last4`.
+   State is pace-based, not raw-count-based, so Monday doesn't read as a
+   failure: ok = 3 hit or comfortably reachable; floor = tight (would need
+   to lift essentially every remaining day); below = 3 is mathematically
+   gone. weeksUnder3 counts completed weeks outright, but the in-progress
+   week only once it can no longer reach 3. */
+export function weekStatus(index, now = new Date()) {
+  const ws = weekStartOf(now);
+  const starts = [3, 2, 1, 0].map((k) => new Date(ws.getFullYear(), ws.getMonth(), ws.getDate() - 7 * k));
+  const counts = starts.map((s) => {
+    const end = new Date(s.getFullYear(), s.getMonth(), s.getDate() + 7);
+    return index.filter((e) => {
+      if (!isLiftEntry(e)) return false;
+      const t = new Date(e.date);
+      return t >= s && t < end;
+    }).length;
+  });
+  const thisWeek = counts[3];
+  const daysLeft = 7 - ((now.getDay() + 6) % 7); // remaining days, today included
+  const needed = Math.max(0, 3 - thisWeek);
+  const state = thisWeek >= 3 ? "ok" : needed > daysLeft ? "below" : needed >= daysLeft - 1 ? "floor" : "ok";
+  const weeksUnder3 = counts.slice(0, 3).filter((n) => n < 3).length + (needed > daysLeft ? 1 : 0);
+  return { thisWeek, last4: counts, weeksUnder3, state };
+}
+
 // One-line explanation for the home screen.
 export function nextDayReason(pick) {
   if (pick.reason !== "stale") return "Next in rotation";
@@ -1076,9 +1109,16 @@ export default function App() {
       return;
     }
     sessionCache.current.set(d.id, session);
+    // What the day planned, so history can tell a bailed session from a short
+    // plan. Gate-held rows that stayed skipped weren't planned that day.
+    const plannedSets = d.exercises.reduce(
+      (n, e) => n + (e.gateHeld && e.skipped ? 0 : Number(e.targetSets) || 0),
+      0
+    );
     const entry = {
       id: d.id, date: d.date, dayType: d.dayType, mode: d.mode,
       headline: headlineFor(kept), setCount: countSets(kept),
+      plannedSets: plannedSets > 0 ? plannedSets : undefined,
       ql: isLegsGym ? null : undefined,
       pr: prNames.length > 0 || undefined,
     };
@@ -1399,6 +1439,7 @@ export default function App() {
           ) : (
             <HomeScreen
               config={config}
+              saveConfig={saveConfig}
               index={index}
               mode={homeMode}
               setMode={setHomeMode}
@@ -1558,7 +1599,7 @@ export function runSuggestion(index, nextDay, now = new Date()) {
   return { kind: "go", label: `Run today — ${runs7 + 1} of ${RUN_WEEKLY_TARGET} this week` };
 }
 
-function HomeScreen({ config, index, mode, setMode, onStart, starting, qlPrompt, answerQl, justFinished, dismissJustFinished, pushToast, onRun }) {
+function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, starting, qlPrompt, answerQl, justFinished, dismissJustFinished, pushToast, onRun }) {
   const [armedDay, setArmedDay] = useState(null);
   // Clock-based scheduling: suggest whichever bucket is stalest (any lifting
   // mode — a travel day resets its clock just like a gym day). Runs and
@@ -1637,6 +1678,43 @@ function HomeScreen({ config, index, mode, setMode, onStart, starting, qlPrompt,
           </div>
         </div>
       )}
+
+      {(() => {
+        const ws = weekStatus(index, new Date());
+        const stateColor = ws.state === "ok" ? "text-lime-300" : ws.state === "floor" ? "text-amber-300" : "text-red-300";
+        const dismissedAt = (config && config.ui && config.ui.splitCheckDismissedAt) || 0;
+        const showSplit = ws.weeksUnder3 >= 2 && Date.now() - dismissedAt > 7 * 86400000;
+        return (
+          <>
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900 px-4 py-3">
+              <div className="flex items-baseline justify-between gap-2">
+                <div className={`text-sm font-bold ${stateColor}`}>
+                  This week: {ws.thisWeek} lift{ws.thisWeek === 1 ? "" : "s"}
+                </div>
+                <div className="text-xs tabular-nums text-zinc-500">last 4 weeks: {ws.last4.join("/")}</div>
+              </div>
+            </div>
+            {showSplit && (
+              <div className="rounded-2xl border border-amber-400/40 bg-zinc-900 p-4">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle size={18} className="mt-1 shrink-0 text-amber-400" />
+                  <div className="flex-1 text-sm leading-relaxed text-zinc-200">
+                    <span className="font-semibold text-amber-300">Split check:</span>{" "}
+                    {ws.weeksUnder3} of the last 4 weeks under the 3-session floor. PPL needs 3/week; consider Upper/Lower.
+                  </div>
+                  <button
+                    aria-label="dismiss split check"
+                    onClick={() => saveConfig({ ...config, ui: { ...(config.ui || {}), splitCheckDismissedAt: Date.now() } })}
+                    className="flex h-11 w-11 shrink-0 items-center justify-center text-zinc-500"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        );
+      })()}
 
       <Seg
         value={mode}
@@ -2344,11 +2422,16 @@ function HistoryScreen({ index, onOpen }) {
                   <span className="text-sm font-bold uppercase tracking-wide text-zinc-200">{DAY_LABEL[e.dayType] || e.dayType}</span>
                   {e.mode === "calisthenics" && <span className="rounded bg-zinc-800 px-1 py-1 text-xs font-semibold text-zinc-400">BW</span>}
                   {e.pr && <span className="rounded bg-lime-400 px-1 text-xs font-bold text-black">PR</span>}
+                  {e.plannedSets > 0 && e.setCount < 0.6 * e.plannedSets && (
+                    <span className="rounded bg-zinc-800 px-1 py-0.5 text-xs font-semibold text-amber-300">partial</span>
+                  )}
                   {e.ql === "same-or-better" && <span title="QL same or better" className="h-2 w-2 rounded-full bg-green-500" />}
                   {e.ql === "worse" && <span title="QL worse" className="h-2 w-2 rounded-full bg-red-500" />}
                 </div>
                 <div className="truncate text-xs text-zinc-500">
-                  {e.dayType === "run" ? (e.headline || "—") : `${e.headline || "—"} · ${e.setCount} sets`}
+                  {e.dayType === "run"
+                    ? (e.headline || "—")
+                    : `${e.headline || "—"} · ${e.setCount}${e.plannedSets > 0 ? `/${e.plannedSets}` : ""} sets`}
                 </div>
               </div>
               <ChevronDown size={16} className="-rotate-90 shrink-0 text-zinc-600" />

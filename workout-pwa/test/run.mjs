@@ -198,6 +198,62 @@ test("rotation reason", () => {
   assert.equal(T.nextDayReason({ day: "pull", reason: "rotation", age: {} }), "Next in rotation");
 });
 
+/* ================= Task 2: weekStatus ================= */
+
+section("weekStatus");
+{
+  // Week of Mon 2026-08-31; prior Mondays: Aug 24, Aug 17, Aug 10.
+  const idx = [
+    lift("push", iso(2026, 8, 31, 8)), // current week (Mon)
+    lift("legs", iso(2026, 8, 28)),
+    lift("pull", iso(2026, 8, 26)),
+    lift("push", iso(2026, 8, 24)), // w-1: 3 lifts
+    lift("legs", iso(2026, 8, 20)),
+    lift("push", iso(2026, 8, 17)), // w-2: 2 lifts
+    lift("pull", iso(2026, 8, 12)),
+    lift("push", iso(2026, 8, 11)),
+    lift("legs", iso(2026, 8, 10)), // w-3: 3 lifts
+    run(iso(2026, 8, 27)),
+    { id: "ev", date: iso(2026, 8, 25), dayType: "event", mode: "event", ql: null },
+  ];
+  test("last4 buckets oldest→current, lifting sessions only", () => {
+    const ws = T.weekStatus(idx, at(2026, 8, 31, 20));
+    assert.deepEqual(ws.last4, [3, 2, 3, 1]);
+    assert.equal(ws.thisWeek, 1);
+  });
+  test("Sunday belongs to its week, Monday to the next", () => {
+    const ws = T.weekStatus([lift("push", at(2026, 8, 30, 23).toISOString())], at(2026, 8, 31, 1));
+    assert.deepEqual(ws.last4, [0, 0, 1, 0]);
+  });
+  test("pace: Monday at 0 lifts is ok, not red", () => {
+    assert.equal(T.weekStatus([], at(2026, 8, 31)).state, "ok");
+  });
+  test("pace: Thursday at 0 is floor", () => {
+    assert.equal(T.weekStatus([], at(2026, 9, 3)).state, "floor");
+  });
+  test("pace: Saturday at 0 is below (3 unreachable)", () => {
+    assert.equal(T.weekStatus([], at(2026, 9, 5)).state, "below");
+  });
+  test("pace: Sunday with 2 is floor (one more today)", () => {
+    const two = [lift("push", iso(2026, 8, 31)), lift("pull", iso(2026, 9, 2))];
+    assert.equal(T.weekStatus(two, at(2026, 9, 6)).state, "floor");
+  });
+  test("3 lifts is ok whenever", () => {
+    const three = [lift("push", iso(2026, 8, 31)), lift("pull", iso(2026, 9, 1)), lift("legs", iso(2026, 9, 2))];
+    assert.equal(T.weekStatus(three, at(2026, 9, 2, 20)).state, "ok");
+  });
+  test("weeksUnder3: completed weeks count outright; current only when unreachable", () => {
+    assert.equal(T.weekStatus(idx, at(2026, 8, 31, 20)).weeksUnder3, 1); // only w-2; Monday can still reach 3
+    assert.equal(T.weekStatus(idx, at(2026, 9, 6, 20)).weeksUnder3, 2); // Sunday, 1 lift + 1 day left = unreachable
+  });
+  test("weekStartOf lands on local Monday midnight", () => {
+    const ws = T.weekStartOf(at(2026, 9, 6, 23)); // Sunday
+    assert.equal(ws.getDay(), 1);
+    assert.equal(ws.getDate(), 31);
+    assert.equal(ws.getHours(), 0);
+  });
+}
+
 /* ================= summary ================= */
 
 console.log(`\n${passed} passed, ${failed} failed`);
