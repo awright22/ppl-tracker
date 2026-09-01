@@ -654,6 +654,62 @@ section("deloadDue + inDeloadWeek");
   });
 }
 
+/* ================= core ladder ================= */
+
+section("core ladder");
+{
+  const perfAt = (dateIso, reps, weight = 0) => ({ date: dateIso, sets: reps.map((r) => ({ weight, reps: r })) });
+  const bent = T.SEED_CONFIG.core[0];
+
+  test("seed ladder chains bent -> straight -> weighted; checkbox core retired (v5)", () => {
+    assert.deepEqual(T.SEED_CONFIG.core.map((e) => e.id), ["cchair-bent", "cchair-straight", "cchair-weighted"]);
+    assert.equal(T.SEED_CONFIG.core[0].progressesTo, "cchair-straight");
+    assert.equal(T.SEED_CONFIG.core[1].progressesTo, "cchair-weighted");
+    assert.equal(T.SEED_CONFIG.core[2].progressesTo, undefined);
+    assert.equal(T.SEED_CONFIG.mobility.v, 5);
+    assert.deepEqual(T.SEED_CONFIG.mobility.core, { push: [], pull: [], legs: [] });
+  });
+  test("activeCoreRung: first non-graduated entry", () => {
+    assert.equal(T.activeCoreRung(T.SEED_CONFIG.core).id, "cchair-bent");
+    const later = T.SEED_CONFIG.core.map((e, i) => (i === 0 ? { ...e, graduated: true } : e));
+    assert.equal(T.activeCoreRung(later).id, "cchair-straight");
+    assert.equal(T.activeCoreRung([]), null);
+  });
+  test("coreRungStreak counts consecutive all-sets-at-ceiling sessions", () => {
+    const perfs = [
+      perfAt(iso(2026, 8, 30), [15, 15, 15]),
+      perfAt(iso(2026, 8, 28), [15, 16, 15]),
+      perfAt(iso(2026, 8, 26), [15, 14, 12]),
+    ];
+    assert.equal(T.coreRungStreak(bent, perfs), 2);
+    assert.equal(T.coreRungStreak(bent, [perfAt(iso(2026, 8, 30), [15, 12, 10])]), 0);
+  });
+  test("cleared at 2 clean sessions -> actionable rung offer", () => {
+    const perfs = [perfAt(iso(2026, 8, 30), [15, 15, 15]), perfAt(iso(2026, 8, 28), [15, 15, 15])];
+    assert.equal(T.coreRungSuggestion(bent, perfs).kind, "rung");
+  });
+  test("one clean session -> 1-of-2 note, never a bump", () => {
+    const one = [perfAt(iso(2026, 8, 30), [15, 15, 15]), perfAt(iso(2026, 8, 28), [15, 12, 10])];
+    const s = T.coreRungSuggestion(bent, one);
+    assert.equal(s.kind, "hold");
+    assert.match(s.label, /1 of 2/);
+  });
+  test("an engine bump on a ladder rung becomes the bar reminder", () => {
+    const s = T.coreRungSuggestion(bent, [perfAt(iso(2026, 8, 30), [15, 12, 10])]);
+    assert.equal(s.kind, "hold");
+    assert.match(s.label, /Rung clears at 3×15/);
+  });
+  test("build passes through on ladder exercises", () => {
+    assert.equal(T.coreRungSuggestion(bent, [perfAt(iso(2026, 8, 30), [15, 7, 6])]).kind, "build");
+  });
+  test("final rung has no progressesTo and bumps normally (+5)", () => {
+    const weighted = T.SEED_CONFIG.core[2];
+    const s = T.coreRungSuggestion(weighted, [perfAt(iso(2026, 8, 30), [12, 12, 12], 5)]);
+    assert.equal(s.kind, "bump");
+    assert.equal(s.target, 10);
+  });
+}
+
 /* ================= summary ================= */
 
 console.log(`\n${passed} passed, ${failed} failed`);
