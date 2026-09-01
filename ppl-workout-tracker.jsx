@@ -71,7 +71,7 @@ const store = {
 export const SEED_CONFIG = {
   // QL-recovery program: daily reset + per-day warm-ups + per-day core (after lifts).
   mobility: {
-    v: 4,
+    v: 5,
     general: [
       { id: "dr-9090", name: "90/90 Breathing", dose: "1 min", note: "Feet on wall. Inhale 4s, exhale 8s." },
       { id: "dr-psoas", name: "Supine Psoas Stretch", dose: "R 90s · L 60s", note: "Edge of bed, opposite knee to chest, leg hangs." },
@@ -114,22 +114,23 @@ export const SEED_CONFIG = {
       { id: "wu-g-glutefig4", name: "LB R Glute (figure-4)", dose: "~2 min", note: "Sit on floor, cross R ankle over L knee. Lacrosse ball under R glute. Find tender spot → hold pressure + bend/straighten knee 5–10× for active release." },
       { id: "wu-g-bandwalk", name: "Lateral Band Walk", dose: "10 steps/way", note: "Mini band above ankles, quarter-squat. Lead with heel, toes forward. Control trail leg. Stay low." },
     ],
-    // Simplified 2026-09: the per-day QL core lists weren't happening; captain's
-    // chair raises were. Side-plank R/L symmetry and the right SL glute bridge
-    // are still Phase 1→2 advancement testers — retest them even though they're
-    // no longer programmed here.
-    core: {
-      push: [
-        { id: "co-cchair", name: "Captain's Chair Leg Raises", dose: "3×10–15", note: "Forearms on the pads, back against the rest — not a bar hang. Raise under control, no swing; slow lower. Stop if the right QL grips.", gymOnly: true },
-      ],
-      pull: [
-        { id: "co-cchair", name: "Captain's Chair Leg Raises", dose: "3×10–15", note: "Forearms on the pads, back against the rest — not a bar hang. Raise under control, no swing; slow lower. Stop if the right QL grips.", gymOnly: true },
-      ],
-      legs: [
-        { id: "co-cchair", name: "Captain's Chair Leg Raises", dose: "3×10–15", note: "Forearms on the pads, back against the rest — not a bar hang. Raise under control, no swing; slow lower. Stop if the right QL grips.", gymOnly: true },
-      ],
-    },
+    // The old checkbox core moved to config.core as real logged exercises
+    // (v5). Side-plank R/L symmetry and the right SL glute bridge are still
+    // Phase 1→2 advancement testers — retest them even though they're no
+    // longer programmed here.
+    core: { push: [], pull: [], legs: [] },
   },
+  // After-lifts core: real logged exercises in their own section, kept out of
+  // the day's set counts. A performance-gated variant ladder: only the first
+  // non-graduated rung is drafted; clearing a rung (every set at the rep
+  // ceiling, two sessions running) offers the next variant — fresh id per
+  // rung so histories are never spliced. The final rung has no progressesTo
+  // and hands progression back to the normal +5 bump engine.
+  core: [
+    { id: "cchair-bent", name: "Captain's Chair Knee Raises", sets: 3, repMin: 8, repMax: 15, increment: 5, unit: "lb", loadType: "bodyweight-plus", current: 0, restSec: 90, progressesTo: "cchair-straight", note: "Forearms on pads, back on the rest — not a bar hang. Posterior tilt at the top, no swing, 3s lower; sloppy reps don't count. Stop if the right QL grips." },
+    { id: "cchair-straight", name: "Captain's Chair Straight-Leg Raises", sets: 3, repMin: 8, repMax: 15, increment: 5, unit: "lb", loadType: "bodyweight-plus", current: 0, restSec: 90, progressesTo: "cchair-weighted", note: "Legs straight, same strictness. Add a 2s pause at the top before calling this rung cleared." },
+    { id: "cchair-weighted", name: "Weighted Captain's Chair Raises", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "bodyweight-plus", current: 5, restSec: 90, note: "DB pinched between the feet. Normal +5 progression from here." },
+  ],
   // Frequency / gating thresholds. Stored in config so they sync to the sheet
   // and can be hand-tuned; missing keys are backfilled from here at boot.
   rules: {
@@ -706,6 +707,42 @@ export function deloadDue(index, rules, now = new Date()) {
   return { weeks, due: !active && weeks >= every, active };
 }
 
+/* ---------- after-lifts core ladder (exported for tests) ---------- */
+
+// The rung currently in rotation: first core entry not yet graduated.
+export function activeCoreRung(coreList) {
+  return (coreList || []).find((ex) => !ex.graduated) || null;
+}
+
+// Consecutive recent performances (newest first) with EVERY set at/above the
+// rep ceiling — the ladder's graduation currency. 2+ clears the rung.
+export function coreRungStreak(ex, perfs) {
+  let n = 0;
+  for (const p of perfs || []) {
+    const sets = (p && p.sets) || [];
+    if (sets.length > 0 && sets.every((s) => setEffectiveReps(s, ex.unilateral) >= ex.repMax)) n += 1;
+    else break;
+  }
+  return n;
+}
+
+/* Suggestion for a ladder exercise (one with progressesTo): its progression
+   is the next variant, never a load bump. Cleared (streak >= 2) -> an
+   actionable "rung" offer; one clean session -> progress note; a would-be
+   bump otherwise -> informational reminder of the bar. Anything else falls
+   through to the normal engine (build / add reps / deload still apply). */
+export function coreRungSuggestion(ex, perfs, opts = {}) {
+  if (!ex.progressesTo) return computeSuggestion(ex, perfs, opts);
+  const streak = coreRungStreak(ex, perfs);
+  if (streak >= 2) return { kind: "rung", label: "Rung cleared — swap in next variant" };
+  const base = computeSuggestion(ex, perfs, opts);
+  if (streak === 1) return { kind: "hold", target: ex.current, label: `1 of 2 clean sessions at ${ex.repMax}s` };
+  if (base && base.kind === "bump") {
+    return { kind: "hold", target: ex.current, label: `Rung clears at ${ex.sets}×${ex.repMax}, twice` };
+  }
+  return base;
+}
+
 /* ---------- Upper template + cross-day history lookup (exported for tests) ---------- */
 
 // Group a day list into slots: a gated lift and its fallback are one slot.
@@ -1216,6 +1253,12 @@ export default function App() {
         c = { ...c, days: { ...c.days, legs, pull } };
         persist("config", c, "gated lifts");
       }
+      // After-lifts core ladder arrives once; absence-guarded so a deliberate
+      // emptying of the list is respected on later boots.
+      if (c.core === undefined) {
+        c = { ...c, core: SEED_CONFIG.core };
+        persist("config", c, "core ladder");
+      }
       // Fill missing per-exercise rest durations (seed value by id, else 120 gym / 90 bodyweight).
       {
         let restChanged = false;
@@ -1311,6 +1354,20 @@ export default function App() {
         })
       );
       applyGateSlots(exercises, index, now);
+      // After-lifts core: append the active ladder rung (own section, own history).
+      if (mode === "gym") {
+        const rung = activeCoreRung(config.core);
+        if (rung && !exercises.some((e) => e.exerciseId === rung.id)) {
+          const coreSessions = [];
+          for (const e of recentEntriesFor(index, rung.id, null, mode, 6)) {
+            const s = await loadSession(e.id);
+            if (s) coreSessions.push(s);
+          }
+          const de = buildDraftExercise(rung, coreSessions, mode, { now, rules: config.rules, deloadWeek: inDeloadWeek(config.rules, now) });
+          de.coreSlot = true;
+          exercises.push(de);
+        }
+      }
       // De-dupe the minute-resolution id so two same-minute sessions can't overwrite each other.
       let id = makeSessionId(now);
       for (let bump = 2; index.some((e) => e.id === id); bump += 1) id = `${makeSessionId(now)}-${bump}`;
@@ -1357,6 +1414,34 @@ export default function App() {
     pushToast("Swapped in — automatic from now on while the gate holds", { tone: "success", ttl: 5000 });
   }, [mutateDraft, persist, pushToast]);
 
+  /* --- graduate a core ladder rung (offer-tap after two cleared sessions) --- */
+  const advanceCoreRung = useCallback((exerciseId) => {
+    const cur = (config && config.core ? config.core : []).find((ex) => ex.id === exerciseId);
+    const next = cur && cur.progressesTo ? config.core.find((ex) => ex.id === cur.progressesTo) : null;
+    setConfig((prev) => {
+      const nc = { ...prev, core: (prev.core || []).map((ex) => (ex.id === exerciseId ? { ...ex, graduated: true } : ex)) };
+      persist("config", nc, "core ladder");
+      return nc;
+    });
+    const d = draftRef.current;
+    const drafted = d && d.exercises.find((e) => e.exerciseId === exerciseId);
+    if (next && drafted && drafted.sets.length === 0) {
+      // Nothing logged on it yet: the new rung takes over this session too.
+      mutateDraft((dd) => ({
+        ...dd,
+        exercises: dd.exercises.map((e) => {
+          if (e.exerciseId !== exerciseId) return e;
+          const de = buildDraftExercise(next, [], "gym", {});
+          de.coreSlot = true;
+          return de;
+        }),
+      }), "now");
+      pushToast(`Rung cleared — ${next.name} from today`, { tone: "success", ttl: 6000 });
+    } else {
+      pushToast(next ? `Rung cleared — ${next.name} starts next session` : "Ladder complete", { tone: "success", ttl: 6000 });
+    }
+  }, [config, mutateDraft, persist, pushToast]);
+
   /* --- finish workout --- */
   const finishWorkout = useCallback(async (opts = {}) => {
     const d = draftRef.current;
@@ -1366,6 +1451,7 @@ export default function App() {
       .map((e) => ({
         exerciseId: e.exerciseId, name: e.name,
         unilateral: e.unilateral || undefined, timed: e.timed || undefined,
+        core: e.coreSlot || undefined, // after-lifts core: tracked, but outside day counts
         sets: e.sets, note: e.note || "",
       }));
     if (kept.length === 0) {
@@ -1440,14 +1526,16 @@ export default function App() {
     }
     sessionCache.current.set(d.id, session);
     // What the day planned, so history can tell a bailed session from a short
-    // plan. Gate-held rows that stayed skipped weren't planned that day.
+    // plan. Gate-held rows that stayed skipped weren't planned that day, and
+    // the after-lifts core stays out of the day's counts entirely.
     const plannedSets = d.exercises.reduce(
-      (n, e) => n + (e.gateHeld && e.skipped ? 0 : Number(e.targetSets) || 0),
+      (n, e) => n + (e.coreSlot || (e.gateHeld && e.skipped) ? 0 : Number(e.targetSets) || 0),
       0
     );
+    const liftKept = kept.filter((e) => !e.core);
     const entry = {
       id: d.id, date: d.date, dayType: d.dayType, mode: d.mode,
-      headline: headlineFor(kept), setCount: countSets(kept),
+      headline: headlineFor(liftKept.length > 0 ? liftKept : kept), setCount: countSets(liftKept),
       plannedSets: plannedSets > 0 ? plannedSets : undefined,
       exerciseIds: kept.map((e) => e.exerciseId), // history lookups match across dayTypes via this
       ql: needsQlCheck ? null : undefined,
@@ -1480,8 +1568,9 @@ export default function App() {
         };
         const days = {};
         DAY_KEYS.forEach((k) => { days[k] = (prevCfg.days[k] || []).map(bumpEx); });
+        const coreList = (prevCfg.core || []).map(bumpEx); // ladder rungs update like any lift
         if (!changed) return prevCfg;
-        const nc = { ...prevCfg, days };
+        const nc = { ...prevCfg, days, core: coreList };
         persist("config", nc, "working weights");
         return nc;
       });
@@ -1576,7 +1665,7 @@ export default function App() {
           unilateral: !!se.unilateral, timed: !!se.timed, amrap: false, needsBar: false,
           loadType: null, repMin: null, repMax: null, increment: 5,
           targetSets: se.sets.length || 3, current: null, restSec: mode === "gym" ? 120 : 90,
-          warmupRamp: false, exNote: "", fallback: "",
+          warmupRamp: false, coreSlot: !!se.core, exNote: "", fallback: "",
           lastPerf: null, suggestion: null, acceptedTarget: null,
           sets: se.sets, note: se.note || "", skipped: false,
           pending: se.unilateral
@@ -1586,6 +1675,24 @@ export default function App() {
       }
     }
     applyGateSlots(exercises, index, new Date()); // rows with restored sets are left alone
+    // After-lifts core rung (skip if the reopened session already carries it).
+    if (mode === "gym") {
+      const rung = activeCoreRung(config.core);
+      if (rung && !exercises.some((e) => e.exerciseId === rung.id)) {
+        const coreSessions = [];
+        for (const e of recentEntriesFor(idxSans, rung.id, null, mode, 6)) {
+          const s = await loadSession(e.id);
+          if (s) coreSessions.push(s);
+        }
+        const de = buildDraftExercise(rung, coreSessions, mode, {
+          now: new Date(),
+          rules: config.rules,
+          deloadWeek: inDeloadWeek(config.rules, new Date(session.date)),
+        });
+        de.coreSlot = true;
+        exercises.push(de);
+      }
+    }
     const warmupDone = {};
     for (const w of session.warmup || []) if (w.done) warmupDone[w.id] = true;
     const coreDone = {};
@@ -1832,6 +1939,7 @@ export default function App() {
               onFinish={finishWorkout}
               onDiscard={discardDraft}
               onAcceptGate={acceptGateSwap}
+              onAdvanceRung={advanceCoreRung}
               mobility={config.mobility}
               pushToast={pushToast}
               onSetLogged={onSetLogged}
@@ -2318,12 +2426,12 @@ function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, startin
 
 /* ---------- logging ---------- */
 
-function LoggingScreen({ draft, index, mutateDraft, onFinish, onDiscard, onAcceptGate, mobility, pushToast, onSetLogged, restActive }) {
+function LoggingScreen({ draft, index, mutateDraft, onFinish, onDiscard, onAcceptGate, onAdvanceRung, mobility, pushToast, onSetLogged, restActive }) {
   const [armedDiscard, setArmedDiscard] = useArmed();
   const [armedFinish, setArmedFinish] = useArmed(3600);
   const [finishing, setFinishing] = useState(false);
   const [showMobility, setShowMobility] = useState(false);
-  const totalSets = countSets(draft.exercises);
+  const totalSets = countSets(draft.exercises.filter((e) => !e.coreSlot)); // core is tracked separately
   const dayName = DAY_LABEL[draft.dayType] || draft.dayType;
   let warmSections = null;
   if (mobility) {
@@ -2427,9 +2535,26 @@ function LoggingScreen({ draft, index, mutateDraft, onFinish, onDiscard, onAccep
         );
       })()}
 
-      {draft.exercises.map((ex, i) => (
-        <ExerciseCard key={ex.exerciseId} ex={ex} idx={i} count={draft.exercises.length} mode={draft.mode} mutateDraft={mutateDraft} onSetLogged={onSetLogged} onAcceptGate={onAcceptGate} pushToast={pushToast} />
-      ))}
+      {draft.exercises.map((ex, i) =>
+        ex.coreSlot ? null : (
+          <ExerciseCard key={ex.exerciseId} ex={ex} idx={i} count={draft.exercises.length} mode={draft.mode} mutateDraft={mutateDraft} onSetLogged={onSetLogged} onAcceptGate={onAcceptGate} onAdvanceRung={onAdvanceRung} pushToast={pushToast} />
+        )
+      )}
+
+      {draft.exercises.some((e) => e.coreSlot) && (
+        <section className="flex flex-col gap-2">
+          <div className="flex items-center gap-2 px-1 pt-1">
+            <Shield size={16} className="text-lime-400" />
+            <span className="text-sm font-semibold text-zinc-100">Core — after lifts</span>
+            <span className="text-xs text-zinc-500">tracked separately</span>
+          </div>
+          {draft.exercises.map((ex, i) =>
+            ex.coreSlot ? (
+              <ExerciseCard key={ex.exerciseId} ex={ex} idx={i} count={draft.exercises.length} mode={draft.mode} mutateDraft={mutateDraft} onSetLogged={onSetLogged} onAcceptGate={onAcceptGate} onAdvanceRung={onAdvanceRung} pushToast={pushToast} />
+            ) : null
+          )}
+        </section>
+      )}
 
       {coreItems.length > 0 && (
         <section className="flex flex-col gap-2">
@@ -2600,7 +2725,7 @@ function buildDraftExercise(ex, sessions, mode, opts = {}) {
   const deload = !!opts.deloadWeek && mode === "gym";
   const suggestion = deload
     ? { kind: "deload-week", label: "Deload — 2×@90%" }
-    : mode === "gym" ? computeSuggestion(ex, perfs, opts) : null;
+    : mode === "gym" ? coreRungSuggestion(ex, perfs, opts) : null; // falls through to computeSuggestion off-ladder
   const firstSet = lastPerf && lastPerf.sets[0];
   const defR = (side) => {
     if (firstSet) {
@@ -2669,7 +2794,7 @@ function patchExercise(draft, idx, patch) {
   return { ...draft, exercises };
 }
 
-function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, onAcceptGate, pushToast }) {
+function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, onAcceptGate, onAdvanceRung, pushToast }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(!!ex.note);
 
@@ -2826,7 +2951,14 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, onAccept
           <div className="text-sm text-zinc-500">First time — no history yet</div>
         )}
         {mode === "gym" && sug && (
-          sug.kind === "bump" || sug.kind === "deload" || sug.kind === "return" ? (
+          sug.kind === "rung" ? (
+            <button
+              onClick={() => onAdvanceRung && onAdvanceRung(ex.exerciseId)}
+              className={`${chipBase} bg-lime-400 text-black active:bg-lime-300 ${TRANS}`}
+            >
+              <ChevronUp size={14} /> {sug.label}
+            </button>
+          ) : sug.kind === "bump" || sug.kind === "deload" || sug.kind === "return" ? (
             <button
               onClick={acceptSuggestion}
               className={`${chipBase} ${TRANS} ${
@@ -3003,7 +3135,7 @@ function findConfigEx(config, exerciseId) {
     const c = (config.calisthenics[day] || []).find((e) => e.id === exerciseId);
     if (c) return c;
   }
-  return null;
+  return (config.core || []).find((e) => e.id === exerciseId) || null;
 }
 
 function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, onReopen, hasDraft, pushToast }) {
@@ -3245,6 +3377,7 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, onR
                 <section key={ex.exerciseId + ei} className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
                   <h2 className="font-semibold text-zinc-100">
                     {ex.name}
+                    {ex.core ? <span className="ml-2 rounded bg-zinc-800 px-1 py-0.5 text-xs font-semibold text-zinc-400">core</span> : null}
                     {ex.pr ? <span className="ml-2 rounded bg-lime-400 px-1 text-xs font-bold text-black">PR</span> : null}
                   </h2>
                   {!editing ? (
@@ -3478,6 +3611,13 @@ function ProgressScreen({ config, index, weights, loadSession, onOpen }) {
             ))}
           </optgroup>
         ))}
+        {(config.core || []).length > 0 && (
+          <optgroup label="Core">
+            {config.core.map((ex) => (
+              <option key={ex.id} value={ex.id}>{ex.name}</option>
+            ))}
+          </optgroup>
+        )}
         <optgroup label="Body">
           <option value={BODYWEIGHT_ID}>Bodyweight</option>
         </optgroup>
@@ -4215,12 +4355,17 @@ function SettingsScreen({ config, saveConfig, themeKey, index, onStartDeload }) 
   const [editingId, setEditingId] = useState(null);
   const [armedReset, setArmedReset] = useArmed();
 
-  const list = mode === "gym" ? config.days[day] || [] : config.calisthenics[day] || [];
+  const list =
+    mode === "gym"
+      ? day === "core" ? config.core || [] : config.days[day] || []
+      : config.calisthenics[day] || [];
 
   const writeList = (nextList) => {
     const next =
       mode === "gym"
-        ? { ...config, days: { ...config.days, [day]: nextList } }
+        ? day === "core"
+          ? { ...config, core: nextList }
+          : { ...config, days: { ...config.days, [day]: nextList } }
         : { ...config, calisthenics: { ...config.calisthenics, [day]: nextList } };
     saveConfig(next);
   };
@@ -4323,8 +4468,15 @@ function SettingsScreen({ config, saveConfig, themeKey, index, onStartDeload }) 
         );
       })()}
 
-      <Seg value={mode} onChange={(v) => { setMode(v); setEditingId(null); }} options={[{ value: "gym", label: "Gym" }, { value: "calisthenics", label: "Bodyweight" }]} />
-      <Seg value={day} onChange={(v) => { setDay(v); setEditingId(null); }} options={DAY_KEYS.map((d) => ({ value: d, label: DAY_LABEL[d] }))} />
+      <Seg value={mode} onChange={(v) => { setMode(v); setEditingId(null); if (v !== "gym" && day === "core") setDay("push"); }} options={[{ value: "gym", label: "Gym" }, { value: "calisthenics", label: "Bodyweight" }]} />
+      <Seg
+        value={day}
+        onChange={(v) => { setDay(v); setEditingId(null); }}
+        options={[
+          ...DAY_KEYS.map((d) => ({ value: d, label: DAY_LABEL[d] })),
+          ...(mode === "gym" ? [{ value: "core", label: "Core" }] : []),
+        ]}
+      />
 
       <div className="flex flex-col gap-2">
         {list.map((ex, i) =>
@@ -4364,7 +4516,7 @@ function SettingsScreen({ config, saveConfig, themeKey, index, onStartDeload }) 
       </div>
 
       <button onClick={addExercise} className={`flex h-12 items-center justify-center gap-2 rounded-2xl border border-lime-400/50 text-sm font-bold text-lime-300 active:bg-zinc-900 ${TRANS}`}>
-        <Plus size={18} /> Add exercise to {DAY_LABEL[day]}{mode === "calisthenics" ? " (bodyweight)" : ""}
+        <Plus size={18} /> Add exercise to {day === "core" ? "Core" : DAY_LABEL[day]}{mode === "calisthenics" ? " (bodyweight)" : ""}
       </button>
 
       <div className="mt-2 flex flex-col gap-2 rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
