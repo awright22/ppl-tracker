@@ -71,7 +71,7 @@ const store = {
 export const SEED_CONFIG = {
   // QL-recovery program: daily reset + per-day warm-ups + per-day core (after lifts).
   mobility: {
-    v: 3,
+    v: 4,
     general: [
       { id: "dr-9090", name: "90/90 Breathing", dose: "1 min", note: "Feet on wall. Inhale 4s, exhale 8s." },
       { id: "dr-psoas", name: "Supine Psoas Stretch", dose: "R 90s · L 60s", note: "Edge of bed, opposite knee to chest, leg hangs." },
@@ -114,22 +114,19 @@ export const SEED_CONFIG = {
       { id: "wu-g-glutefig4", name: "LB R Glute (figure-4)", dose: "~2 min", note: "Sit on floor, cross R ankle over L knee. Lacrosse ball under R glute. Find tender spot → hold pressure + bend/straighten knee 5–10× for active release." },
       { id: "wu-g-bandwalk", name: "Lateral Band Walk", dose: "10 steps/way", note: "Mini band above ankles, quarter-squat. Lead with heel, toes forward. Control trail leg. Stay low." },
     ],
+    // Simplified 2026-09: the per-day QL core lists weren't happening; captain's
+    // chair raises were. Side-plank R/L symmetry and the right SL glute bridge
+    // are still Phase 1→2 advancement testers — retest them even though they're
+    // no longer programmed here.
     core: {
       push: [
-        { id: "co-p-deadbug", name: "Dead Bugs", dose: "2×10/side", note: "On back, arms up, knees 90°. Press low back flat. Lower opposite arm/leg. Only go as far as back stays glued." },
-        { id: "co-p-pallof", name: "Overhead Pallof Press", dose: "2×10/side · 3s hold", note: "Cable chest height, stand perpendicular. Press overhead, hold 3s. Resist rotation + lateral pull.", gymOnly: true },
-        { id: "co-p-sideplank", name: "Side Plank (R down)", dose: "2×30–45s", note: "Forearm down, elbow under shoulder. Knees or straight leg. Stack hips, don't sag. L side: 1 set." },
+        { id: "co-cchair", name: "Captain's Chair Leg Raises", dose: "3×10–15", note: "Forearms on the pads, back against the rest — not a bar hang. Raise under control, no swing; slow lower. Stop if the right QL grips.", gymOnly: true },
       ],
       pull: [
-        { id: "co-l-mcgill", name: "McGill Curl-Up", dose: "2×8 · 10s holds", note: "On back, 1 knee bent, 1 straight. Hands under low back. Lift head/shoulders just off floor, hold 10s. Don't flatten back." },
-        { id: "co-l-suitcase", name: "Suitcase Carry", dose: "3×30–40yd/side", note: "Single DB/KB at side, start 25% BW. Walk slow — ribs over pelvis, no lean. L hand = trains R side anti-lateral-flexion.", gymOnly: true },
-        { id: "co-l-slbridge", name: "SL Glute Bridge (R)", dose: "2×10 · 3s hold", note: "On back, 1 foot down, other knee to chest. Press heel, lift hips, hold 3s. No hip rotation. L side: 1 set." },
+        { id: "co-cchair", name: "Captain's Chair Leg Raises", dose: "3×10–15", note: "Forearms on the pads, back against the rest — not a bar hang. Raise under control, no swing; slow lower. Stop if the right QL grips.", gymOnly: true },
       ],
       legs: [
-        { id: "co-g-birddog", name: "Bird Dog", dose: "2×8/side", note: "Hands & knees. Extend opposite arm + leg to torso level. Hold 2s. No hip rotation, no back sag." },
-        { id: "co-g-clamshell", name: "Banded Clamshell (R)", dose: "2×15 · 2s hold", note: "Side-lying, band above knees, hips 60°. Open top knee, hold 2s. Feet together, don't roll back. L side: 1 set." },
-        { id: "co-g-hipabd", name: "Side-Lying Hip Abd. (R)", dose: "2×15", badge: "Phase out wk 12", note: "Top leg slightly behind, foot turned in (“pour water”). Lift to ceiling, slow lower. No hip hike." },
-        { id: "co-g-sideplank", name: "Side Plank (R down)", dose: "2×30s", note: "Forearm down, elbow under shoulder. Knees or straight leg. Stack hips, don't sag. L side: 1 set." },
+        { id: "co-cchair", name: "Captain's Chair Leg Raises", dose: "3×10–15", note: "Forearms on the pads, back against the rest — not a bar hang. Raise under control, no swing; slow lower. Stop if the right QL grips.", gymOnly: true },
       ],
     },
   },
