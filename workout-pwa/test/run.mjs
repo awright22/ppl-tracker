@@ -270,6 +270,27 @@ test("never below one increment", () => {
   assert.equal(T.roundToIncrement(1, 5), 5);
 });
 
+section("plateBreakdown");
+test("no bar weight: total splits evenly across both sides (machine sleds)", () => {
+  assert.equal(T.plateBreakdown(20), "10");
+  assert.equal(T.plateBreakdown(385), "4×45 + 10 + 2.5");
+});
+test("bar weight comes off the total before splitting across sides", () => {
+  // 65 total on a 45lb barbell = 20lbs of plates = 10/side, one 10 each side.
+  assert.equal(T.plateBreakdown(65, 45), "10");
+  // 95 total on a 45lb barbell = 50lbs of plates = 25/side.
+  assert.equal(T.plateBreakdown(95, 45), "25");
+});
+test("total at or under the bar's own weight has no plates to add", () => {
+  assert.equal(T.plateBreakdown(45, 45), "");
+  assert.equal(T.plateBreakdown(20, 45), "");
+});
+test("zero/negative/missing bar weight falls back to no-bar behavior", () => {
+  assert.equal(T.plateBreakdown(65, 0), T.plateBreakdown(65));
+  assert.equal(T.plateBreakdown(65, -10), T.plateBreakdown(65));
+  assert.equal(T.plateBreakdown(65, undefined), T.plateBreakdown(65));
+});
+
 section("computeSuggestion break rules");
 {
   const perf = (dateIso, weight, reps) => ({ date: dateIso, sets: reps.map((r) => ({ weight, reps: r })) });
