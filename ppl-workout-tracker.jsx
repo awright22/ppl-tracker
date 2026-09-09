@@ -411,6 +411,15 @@ export function deloadTarget(current, increment) {
   return Math.max(inc, round2(t));
 }
 
+// Hold-session working weight: current working weight × rules.holdPct
+// (default 0.85 for ramped-compound lifts, 0.90 otherwise — same split the
+// break-modifier "back from break" restart already uses), snapped to the
+// increment, never a no-op.
+export function holdTarget(ex, rules) {
+  const pct = Number(rules && rules.holdPct) > 0 ? Number(rules.holdPct) : (ex.warmupRamp ? 0.85 : 0.90);
+  return roundToIncrement((Number(ex.current) || 0) * pct, ex.increment, ex.current);
+}
+
 // Nearest multiple of increment; when that lands exactly on `avoid` (the
 // current weight), step down one increment so a restart is never a no-op.
 export function roundToIncrement(value, increment, avoid) {
@@ -482,11 +491,22 @@ export function findRecentPerfs(sessions, exerciseId, limit = 4) {
   for (const s of sessions) {
     const ex = (s.exercises || []).find((e) => e.exerciseId === exerciseId && e.sets && e.sets.length > 0);
     if (ex) {
-      out.push({ date: s.date, sessionId: s.id, sets: ex.sets, note: ex.note || "" });
+      out.push({ date: s.date, sessionId: s.id, sets: ex.sets, note: ex.note || "", hold: !!s.hold });
       if (out.length >= limit) break;
     }
   }
   return out;
+}
+
+// Perfs the suggestion engine is allowed to reason about. A "hold" session
+// (CNS-limited day, loads deliberately reduced) is invisible to progression:
+// it can't trigger a bump, can't count as a floor failure, can't feed the
+// deload streak, and doesn't reset "days since last real exposure" for the
+// break-modifier — computeSuggestion/coreRungSuggestion just see the last
+// real perf as if the hold day never happened. History display (lastPerf)
+// still shows it; only the engine's view is filtered.
+export function engineVisiblePerfs(perfs) {
+  return (perfs || []).filter((p) => !p.hold);
 }
 
 export function findLastPerf(sessions, exerciseId) {
@@ -1329,7 +1349,7 @@ export default function App() {
   }, [loadSession, persist]);
 
   /* --- start workout --- */
-  const startWorkout = useCallback(async (dayType, mode) => {
+  const startWorkout = useCallback(async (dayType, mode, hold) => {
     if (!config || starting) return;
     setStarting(true);
     try {
@@ -1356,6 +1376,7 @@ export default function App() {
           rules: config.rules,
           gateOpen: ex.gated ? gateOpenFor(ex, index, now) : undefined,
           deloadWeek: inDeloadWeek(config.rules, now),
+          hold: !!hold,
         })
       );
       applyGateSlots(exercises, index, now);
@@ -1368,7 +1389,7 @@ export default function App() {
             const s = await loadSession(e.id);
             if (s) coreSessions.push(s);
           }
-          const de = buildDraftExercise(rung, coreSessions, mode, { now, rules: config.rules, deloadWeek: inDeloadWeek(config.rules, now) });
+          const de = buildDraftExercise(rung, coreSessions, mode, { now, rules: config.rules, deloadWeek: inDeloadWeek(config.rules, now), hold: !!hold });
           de.coreSlot = true;
           exercises.push(de);
         }
@@ -1376,7 +1397,7 @@ export default function App() {
       // De-dupe the minute-resolution id so two same-minute sessions can't overwrite each other.
       let id = makeSessionId(now);
       for (let bump = 2; index.some((e) => e.id === id); bump += 1) id = `${makeSessionId(now)}-${bump}`;
-      const d = { id, date: now.toISOString(), dayType, mode, exercises, warmupDone: {}, coreDone: {} };
+      const d = { id, date: now.toISOString(), dayType, mode, exercises, warmupDone: {}, coreDone: {}, hold: mode === "gym" ? !!hold : false };
       setJustFinished(null);
       setRest(null);
       setDraft(d, "now");
@@ -1520,6 +1541,7 @@ export default function App() {
       dayType: d.dayType, mode: d.mode,
       exercises: kept, qlCheck: needsQlCheck ? null : undefined,
       warmup, core,
+      hold: d.hold || undefined,
     };
     const okSession = await store.set(`session:${d.id}`, session);
     if (!okSession) {
@@ -1545,6 +1567,7 @@ export default function App() {
       exerciseIds: kept.map((e) => e.exerciseId), // history lookups match across dayTypes via this
       ql: needsQlCheck ? null : undefined,
       pr: prNames.length > 0 || undefined,
+      hold: d.hold || undefined,
     };
     setIndex((prev) => {
       const next = [entry, ...prev.filter((e) => e.id !== d.id)].sort(byDateDesc);
@@ -1557,8 +1580,10 @@ export default function App() {
     // session updates days.push / days.pull (there is no days.upper).
     // Critical deload guard: sessions dated inside the stamped deload week
     // never write — otherwise the 90% loads overwrite real working weights
-    // and wreck progression on resume.
-    if (d.mode === "gym" && !inDeloadWeek(config && config.rules, new Date(d.date))) {
+    // and wreck progression on resume. Hold sessions get the same guard —
+    // the whole point is a CNS-limited day can't move working weight either
+    // direction, so a hold session's reduced loads never become `current`.
+    if (d.mode === "gym" && !d.hold && !inDeloadWeek(config && config.rules, new Date(d.date))) {
       setConfig((prevCfg) => {
         let changed = false;
         const bumpEx = (cfgEx) => {
@@ -1584,7 +1609,7 @@ export default function App() {
     setRest(null);
     store.remove("draft");
     setJustFinished(session);
-    pushToast(`${DAY_LABEL[d.dayType]} day saved — ${entry.setCount} sets`, { tone: "success" });
+    pushToast(`${DAY_LABEL[d.dayType]} day saved${d.hold ? " — hold, working weights unchanged" : ""} — ${entry.setCount} sets`, { tone: "success" });
     if (prNames.length > 0) {
       pushToast(`🎉 PR: ${prNames.slice(0, 2).join(", ")}${prNames.length > 2 ? ` +${prNames.length - 2}` : ""}`, { tone: "success", ttl: 6500 });
     }
@@ -1650,6 +1675,7 @@ export default function App() {
         now: new Date(),
         rules: config.rules,
         deloadWeek: inDeloadWeek(config.rules, new Date(session.date)), // the session's own week
+        hold: !!session.hold,
       });
       const logged = (session.exercises || []).find((se) => se.exerciseId === ex.id);
       if (logged && logged.sets && logged.sets.length) {
@@ -1693,6 +1719,7 @@ export default function App() {
           now: new Date(),
           rules: config.rules,
           deloadWeek: inDeloadWeek(config.rules, new Date(session.date)),
+          hold: !!session.hold,
         });
         de.coreSlot = true;
         exercises.push(de);
@@ -1702,7 +1729,7 @@ export default function App() {
     for (const w of session.warmup || []) if (w.done) warmupDone[w.id] = true;
     const coreDone = {};
     for (const c of session.core || []) if (c.done) coreDone[c.id] = c.done;
-    const d = { id: session.id, date: session.date, dayType, mode, exercises, warmupDone, coreDone };
+    const d = { id: session.id, date: session.date, dayType, mode, exercises, warmupDone, coreDone, hold: !!session.hold };
     setJustFinished(null);
     setRest(null);
     setDraft(d, "now");
@@ -2117,6 +2144,9 @@ export function runSuggestion(index, nextDay, now = new Date()) {
 
 function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, starting, qlPrompt, answerQl, justFinished, dismissJustFinished, pushToast, onRun, onLogEvent, onStartDeload }) {
   const [armedDay, setArmedDay] = useState(null);
+  // Off by default, per session — a CNS-limited day, not a standing setting.
+  const [hold, setHold] = useState(false);
+  const startDay = (day) => onStart(day, mode, hold);
   // Clock-based scheduling: suggest whichever bucket is stalest (any lifting
   // mode — a travel day resets its clock just like a gym day). Runs and
   // events sit outside the clocks.
@@ -2285,11 +2315,25 @@ function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, startin
         </div>
       )}
 
+      {mode === "gym" && (
+        <div className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 ${TRANS} ${
+          hold ? "border-amber-400/50 bg-zinc-900" : "border-zinc-800 bg-zinc-900"
+        }`}>
+          <div className="min-w-0">
+            <div className={`text-sm font-semibold ${hold ? "text-amber-300" : "text-zinc-100"}`}>Hold loads today</div>
+            <div className="mt-0.5 text-xs text-zinc-500">
+              CNS-limited, not muscle-limited — train lighter, don't move progression either way.
+            </div>
+          </div>
+          <ToggleBtn value={hold} onChange={setHold} />
+        </div>
+      )}
+
       <div className="flex flex-col gap-3">
         {nextDay === "upper" && (
           <button
             disabled={starting}
-            onClick={() => onStart("upper", mode)}
+            onClick={() => startDay("upper")}
             className={`group rounded-2xl border border-lime-400/50 bg-zinc-900 p-5 text-left active:border-lime-400 ${TRANS} ${starting ? "opacity-60" : ""}`}
           >
             <div className="flex items-center justify-between">
@@ -2316,7 +2360,7 @@ function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, startin
             <button
               key={day}
               disabled={starting}
-              onClick={() => onStart(day, mode)}
+              onClick={() => startDay(day)}
               className={`group rounded-2xl border p-5 text-left ${TRANS} ${
                 armed ? "border-lime-400 bg-zinc-900" : "border-zinc-800 bg-zinc-900 active:border-zinc-600"
               } ${starting ? "opacity-60" : ""}`}
@@ -2484,6 +2528,7 @@ function LoggingScreen({ draft, index, mutateDraft, onFinish, onDiscard, onAccep
             <div className="text-lg font-bold">
               {DAY_LABEL[draft.dayType]}
               {draft.mode === "calisthenics" && <span className="ml-2 rounded bg-zinc-800 px-2 py-1 text-xs font-semibold text-zinc-300">BODYWEIGHT</span>}
+              {draft.hold && <span className="ml-2 rounded border border-amber-400/60 px-2 py-1 text-xs font-semibold text-amber-300">HOLD</span>}
             </div>
             <div className="text-xs text-zinc-500">{fullDate(draft.date)} · {totalSets} sets logged</div>
           </div>
@@ -2724,13 +2769,20 @@ function MobilityScreen({ title, subtitle, sections, doneLabel, done, onToggle, 
 // Build one draft exercise from a config exercise + recent sessions (newest first).
 // opts flows to computeSuggestion: { now, rules, gateOpen }. opts.deloadWeek
 // puts gym drafts in deload mode: 2 sets pre-filled at 90%, no bump/build.
+// opts.hold puts it in hold mode: pre-filled at rules.holdPct (85/90%,
+// warmupRamp-dependent), no suggestion — and its perfs are filtered out of
+// the engine's view (lastPerf/rep-seeding still show the real history).
 function buildDraftExercise(ex, sessions, mode, opts = {}) {
   const perfs = findRecentPerfs(sessions, ex.id, 4);
   const lastPerf = perfs[0] || null;
+  const enginePerfs = engineVisiblePerfs(perfs);
   const deload = !!opts.deloadWeek && mode === "gym";
+  const hold = !!opts.hold && mode === "gym";
   const suggestion = deload
     ? { kind: "deload-week", label: "Deload — 2×@90%" }
-    : mode === "gym" ? coreRungSuggestion(ex, perfs, opts) : null; // falls through to computeSuggestion off-ladder
+    : hold
+      ? { kind: "hold-session", label: "Hold — loads not tracked" }
+      : mode === "gym" ? coreRungSuggestion(ex, enginePerfs, opts) : null; // falls through to computeSuggestion off-ladder
   const firstSet = lastPerf && lastPerf.sets[0];
   const defR = (side) => {
     if (firstSet) {
@@ -2744,7 +2796,9 @@ function buildDraftExercise(ex, sessions, mode, opts = {}) {
   if (mode === "gym") {
     pending.weight = deload && Number(ex.current) > 0
       ? roundToIncrement(ex.current * 0.9, ex.increment, ex.current)
-      : ex.current;
+      : hold && Number(ex.current) > 0
+        ? holdTarget(ex, opts.rules)
+        : ex.current;
   }
   if (ex.unilateral) { pending.repsL = defR("repsL"); pending.repsR = defR("repsR"); }
   else pending.reps = defR();
@@ -3003,7 +3057,7 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, onAccept
             <span className={`${chipBase} border ${
               sug.kind === "deload-week"
                 ? "border-lime-400/50 text-lime-300"
-                : sug.kind === "build" || sug.stale
+                : sug.kind === "hold-session" || sug.kind === "build" || sug.stale
                   ? "border-amber-400/60 text-amber-300"
                   : "border-zinc-700 text-zinc-400"
             }`}>
@@ -3155,6 +3209,7 @@ function HistoryScreen({ index, onOpen }) {
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-bold uppercase tracking-wide text-zinc-200">{DAY_LABEL[e.dayType] || e.dayType}</span>
                   {e.mode === "calisthenics" && <span className="rounded bg-zinc-800 px-1 py-1 text-xs font-semibold text-zinc-400">BW</span>}
+                  {e.hold && <span className="rounded border border-amber-400/60 px-1 py-0.5 text-xs font-semibold text-amber-300">HOLD</span>}
                   {e.pr && <span className="rounded bg-lime-400 px-1 text-xs font-bold text-black">PR</span>}
                   {e.plannedSets > 0 && e.setCount < 0.6 * e.plannedSets && (
                     <span className="rounded bg-zinc-800 px-1 py-0.5 text-xs font-semibold text-amber-300">partial</span>
