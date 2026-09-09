@@ -153,7 +153,7 @@ export const SEED_CONFIG = {
       // pre-injury barbell row history lives under another id and stays there.
       // row-csdb (single-arm) retired 2025-08: left-arm rows fire the right QL
       // via contralateral anti-rotation, muddying every check the gates read.
-      { id: "bb-row", name: "Bent-Over Barbell Row", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "plate-loaded", current: 65, restSec: 120, warmupRamp: true, gated: true, replaces: "row-cs-bilat", gateStreak: 3, note: "3-1-3-0 tempo for the first 3 sessions" },
+      { id: "bb-row", name: "Bent-Over Barbell Row", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "plate-loaded", barWeight: 45, current: 65, restSec: 120, warmupRamp: true, gated: true, replaces: "row-cs-bilat", gateStreak: 3, note: "3-1-3-0 tempo for the first 3 sessions" },
       { id: "row-cs-bilat", name: "Chest-Supported DB Row (bilateral)", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 55, restSec: 120, warmupRamp: true, note: "45° bench" },
       { id: "pulldown", name: "Lat Pulldown", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "stack", current: 120, restSec: 120 },
       { id: "shrug-db", name: "Seated DB Shrugs", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 75, restSec: 90 },
@@ -164,7 +164,7 @@ export const SEED_CONFIG = {
       // Gated slot: RDL (streak >= 6) vs the back extension holding its place.
       // Fresh id on purpose — backext-45 WAS the RDL through July and keeps
       // that history; resurrecting it would splice two movements together.
-      { id: "rdl", name: "Romanian Deadlift", sets: 3, repMin: 8, repMax: 12, increment: 10, unit: "lb", loadType: "plate-loaded", current: 95, restSec: 120, warmupRamp: true, gated: true, replaces: "backext-45", gateStreak: 6, note: "3s eccentric for the first 3 sessions" },
+      { id: "rdl", name: "Romanian Deadlift", sets: 3, repMin: 8, repMax: 12, increment: 10, unit: "lb", loadType: "plate-loaded", barWeight: 45, current: 95, restSec: 120, warmupRamp: true, gated: true, replaces: "backext-45", gateStreak: 6, note: "3s eccentric for the first 3 sessions" },
       { id: "backext-45", name: "45° Back Extension", sets: 3, repMin: 12, repMax: 12, increment: 5, unit: "lb", loadType: "bodyweight-plus", current: 50, restSec: 90 },
       { id: "slpress", name: "Single-Leg Leg Press", sets: 3, repMin: 10, repMax: 12, increment: 10, unit: "lb", loadType: "plate-loaded", current: 140, unilateral: true, restSec: 120, warmupRamp: true },
       // Gated slot: goblet (last check passed) vs bilateral leg press —
@@ -349,8 +349,12 @@ export function rampWeights(working, increment) {
 }
 
 // Per-side plate breakdown for a total loaded weight (standard lb plates).
-export function plateBreakdown(total) {
-  const side = (Number(total) || 0) / 2;
+// `barWeight` is the empty bar's own weight (e.g. 45 for a standard Olympic
+// barbell) — it doesn't sit on either side, so it comes off the total before
+// splitting the rest across the two sides.
+export function plateBreakdown(total, barWeight = 0) {
+  const bar = Number(barWeight) > 0 ? Number(barWeight) : 0;
+  const side = ((Number(total) || 0) - bar) / 2;
   if (side <= 0) return "";
   const plates = [45, 35, 25, 10, 5, 2.5];
   let rem = side;
@@ -2746,7 +2750,7 @@ function buildDraftExercise(ex, sessions, mode, opts = {}) {
   return {
     exerciseId: ex.id, name: ex.name,
     unilateral: !!ex.unilateral, timed: !!ex.timed, amrap: !!ex.amrap, needsBar: !!ex.needsBar,
-    loadType: ex.loadType || null, repMin: ex.repMin ?? null, repMax: ex.repMax ?? null,
+    loadType: ex.loadType || null, barWeight: ex.barWeight || 0, repMin: ex.repMin ?? null, repMax: ex.repMax ?? null,
     increment: ex.increment || 0, targetSets: deload ? 2 : ex.sets || 3, current: ex.current ?? null,
     restSec: ex.restSec || (mode === "gym" ? 120 : 90),
     warmupRamp: !!ex.warmupRamp,
@@ -3036,7 +3040,9 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, onAccept
         )}
         {mode === "gym" && ex.loadType === "plate-loaded" && Number(ex.pending.weight) > 0 && (
           <div className="-mt-1 text-right text-xs tabular-nums text-zinc-500">
-            per side: {plateBreakdown(ex.pending.weight) || "—"}
+            {ex.barWeight > 0 && Number(ex.pending.weight) < ex.barWeight
+              ? `below the ${fmtW(ex.barWeight)} bar`
+              : <>{ex.barWeight > 0 ? `${fmtW(ex.barWeight)} bar + ` : ""}per side: {plateBreakdown(ex.pending.weight, ex.barWeight) || "—"}</>}
           </div>
         )}
         {ex.unilateral ? (
@@ -4619,6 +4625,11 @@ function ExerciseEditor({ ex, mode, onSave, onDelete, onCancel }) {
               {LOAD_TYPES.map((lt) => <option key={lt} value={lt}>{lt}</option>)}
             </select>
           </Field>
+          {form.loadType === "plate-loaded" && (
+            <Field label="Bar weight">
+              <Stepper small value={form.barWeight ?? 0} onChange={(v) => set({ barWeight: Math.max(0, v) })} step={5} min={0} max={100} />
+            </Field>
+          )}
         </>
       )}
       <Field label="Unilateral (L/R)"><ToggleBtn value={!!form.unilateral} onChange={(v) => set({ unilateral: v })} /></Field>
