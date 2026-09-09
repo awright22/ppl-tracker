@@ -348,7 +348,8 @@ export function rampWeights(working, increment) {
   return { half: round2(snap(working * 0.5)), threeQ: round2(snap(working * 0.75)) };
 }
 
-// Per-side plate breakdown for a total loaded weight (standard lb plates).
+// Per-side plate breakdown for a total loaded weight. Plate sizes match
+// what's actually on hand — no 35s.
 // `barWeight` is the empty bar's own weight (e.g. 45 for a standard Olympic
 // barbell) — it doesn't sit on either side, so it comes off the total before
 // splitting the rest across the two sides.
@@ -356,7 +357,7 @@ export function plateBreakdown(total, barWeight = 0) {
   const bar = Number(barWeight) > 0 ? Number(barWeight) : 0;
   const side = ((Number(total) || 0) - bar) / 2;
   if (side <= 0) return "";
-  const plates = [45, 35, 25, 10, 5, 2.5];
+  const plates = [45, 25, 10, 5, 2.5];
   let rem = side;
   const parts = [];
   for (const p of plates) {

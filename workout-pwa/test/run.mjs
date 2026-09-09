@@ -275,6 +275,9 @@ test("no bar weight: total splits evenly across both sides (machine sleds)", () 
   assert.equal(T.plateBreakdown(20), "10");
   assert.equal(T.plateBreakdown(385), "4×45 + 10 + 2.5");
 });
+test("no 35s on hand: a 35lb/side load breaks into 25 + 10, not a single 35", () => {
+  assert.equal(T.plateBreakdown(70), "25 + 10");
+});
 test("bar weight comes off the total before splitting across sides", () => {
   // 65 total on a 45lb barbell = 20lbs of plates = 10/side, one 10 each side.
   assert.equal(T.plateBreakdown(65, 45), "10");
