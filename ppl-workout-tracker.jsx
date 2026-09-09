@@ -2802,6 +2802,8 @@ function patchExercise(draft, idx, patch) {
 function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, onAcceptGate, onAdvanceRung, pushToast }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(!!ex.note);
+  const [warmupDone, setWarmupDone] = useState({});
+  useEffect(() => { setWarmupDone({}); }, [ex.exerciseId]); // fresh checklist per exercise
 
   const repTarget = ex.amrap
     ? "AMRAP"
@@ -2821,6 +2823,21 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, onAccept
       return { ...patchExercise(d, idx, { sets: [...cur.sets, set] }), rest: restObj };
     }, "now"); // checkpoint the draft (sets + running rest timer) on every logged set
     if (onSetLogged) onSetLogged({ until: Date.now() + (ex.restSec || 90) * 1000, total: ex.restSec || 90, label: ex.name });
+  };
+
+  // Checking off a warm-up set starts a short rest countdown (reuses the
+  // same rest bar as working sets) so warm-up sets get real breaks too.
+  // Warm-up rests run shorter than the working-set rest — half of it,
+  // clamped to a sane 20-60s band.
+  const toggleWarmup = (key) => {
+    setWarmupDone((w) => {
+      const checked = !w[key];
+      if (checked && onSetLogged) {
+        const warmupRestSec = Math.max(20, Math.min(60, Math.round((ex.restSec || 90) / 2)));
+        onSetLogged({ until: Date.now() + warmupRestSec * 1000, total: warmupRestSec, label: `${ex.name} warm-up` });
+      }
+      return { ...w, [key]: checked };
+    });
   };
 
   const removeSet = (si) => {
@@ -3002,9 +3019,36 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, onAccept
       {mode === "gym" && ex.warmupRamp && ex.sets.length === 0 && rampWeights(Number(ex.pending.weight) || 0, ex.increment) ? (
         (() => {
           const ramp = rampWeights(Number(ex.pending.weight) || 0, ex.increment);
+          const stages = [
+            { key: "light", label: "light", reps: 10 },
+            { key: "half", label: fmtW(ramp.half), reps: 8 },
+            { key: "threeQ", label: fmtW(ramp.threeQ), reps: 4 },
+          ];
           return (
-            <div className="mt-2 rounded-xl bg-zinc-950 px-3 py-2 text-xs tabular-nums text-zinc-500">
-              Warm-up: light ×10 · <span className="font-semibold text-zinc-300">{fmtW(ramp.half)}</span> ×8 · <span className="font-semibold text-zinc-300">{fmtW(ramp.threeQ)}</span> ×4 · then working sets
+            <div className="mt-2 flex flex-col gap-1.5 rounded-xl bg-zinc-950 px-3 py-2 text-xs tabular-nums text-zinc-500">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-600">Warm-up · check off between sets to time your rest</div>
+              {stages.map((s) => {
+                const done = !!warmupDone[s.key];
+                return (
+                  <button
+                    key={s.key}
+                    type="button"
+                    aria-label={`warm-up set ${s.label} × ${s.reps} ${done ? "done" : "not done"}`}
+                    onClick={() => toggleWarmup(s.key)}
+                    className="flex items-center gap-2 py-0.5 text-left active:opacity-70"
+                  >
+                    <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ${TRANS} ${
+                      done ? "border-lime-400 bg-lime-400" : "border-zinc-600"
+                    }`}>
+                      {done ? <Check size={10} strokeWidth={3} className="text-black" /> : null}
+                    </span>
+                    <span className={done ? "text-zinc-600 line-through" : "text-zinc-300"}>
+                      <span className="font-semibold">{s.label}</span> ×{s.reps}
+                    </span>
+                  </button>
+                );
+              })}
+              <div className="pl-6 text-zinc-600">then working sets</div>
             </div>
           );
         })()
