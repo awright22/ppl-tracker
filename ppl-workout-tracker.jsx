@@ -2315,20 +2315,6 @@ function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, startin
         </div>
       )}
 
-      {mode === "gym" && (
-        <div className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 ${TRANS} ${
-          hold ? "border-amber-400/50 bg-zinc-900" : "border-zinc-800 bg-zinc-900"
-        }`}>
-          <div className="min-w-0">
-            <div className={`text-sm font-semibold ${hold ? "text-amber-300" : "text-zinc-100"}`}>Hold loads today</div>
-            <div className="mt-0.5 text-xs text-zinc-500">
-              CNS-limited, not muscle-limited — train lighter, don't move progression either way.
-            </div>
-          </div>
-          <ToggleBtn value={hold} onChange={setHold} />
-        </div>
-      )}
-
       <div className="flex flex-col gap-3">
         {nextDay === "upper" && (
           <button
@@ -2463,6 +2449,20 @@ function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, startin
           </div>
         </div>
       </div>
+
+      {mode === "gym" && (
+        <div className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 ${TRANS} ${
+          hold ? "border-amber-400/50 bg-zinc-900" : "border-zinc-800 bg-zinc-900"
+        }`}>
+          <div className="min-w-0">
+            <div className={`text-sm font-semibold ${hold ? "text-amber-300" : "text-zinc-100"}`}>Hold loads today</div>
+            <div className="mt-0.5 text-xs text-zinc-500">
+              CNS-limited, not muscle-limited — train lighter, don't move progression either way.
+            </div>
+          </div>
+          <ToggleBtn value={hold} onChange={setHold} />
+        </div>
+      )}
 
       {index.length === 0 && (
         <div className="text-center text-xs text-zinc-600">
@@ -3074,15 +3074,21 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, onAccept
         (() => {
           const ramp = rampWeights(Number(ex.pending.weight) || 0, ex.increment);
           const stages = [
-            { key: "light", label: "light", reps: 10 },
-            { key: "half", label: fmtW(ramp.half), reps: 8 },
-            { key: "threeQ", label: fmtW(ramp.threeQ), reps: 4 },
+            { key: "light", label: "light", weight: null, reps: 10 },
+            { key: "half", label: fmtW(ramp.half), weight: ramp.half, reps: 8 },
+            { key: "threeQ", label: fmtW(ramp.threeQ), weight: ramp.threeQ, reps: 4 },
           ];
+          const plateSide = (w) => {
+            if (ex.loadType !== "plate-loaded" || w == null) return null;
+            if (ex.barWeight > 0 && w < ex.barWeight) return `below the ${fmtW(ex.barWeight)} bar`;
+            return `${ex.barWeight > 0 ? `${fmtW(ex.barWeight)} bar + ` : ""}per side ${plateBreakdown(w, ex.barWeight) || "—"}`;
+          };
           return (
             <div className="mt-2 flex flex-col gap-1.5 rounded-xl bg-zinc-950 px-3 py-2 text-xs tabular-nums text-zinc-500">
               <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-600">Warm-up · check off between sets to time your rest</div>
               {stages.map((s) => {
                 const done = !!warmupDone[s.key];
+                const side = plateSide(s.weight);
                 return (
                   <button
                     key={s.key}
@@ -3098,6 +3104,7 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, onAccept
                     </span>
                     <span className={done ? "text-zinc-600 line-through" : "text-zinc-300"}>
                       <span className="font-semibold">{s.label}</span> ×{s.reps}
+                      {side && <span className="ml-1 text-zinc-600">({side})</span>}
                     </span>
                   </button>
                 );
