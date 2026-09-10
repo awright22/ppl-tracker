@@ -88,8 +88,8 @@ function rebuildReadable(ss, kv) {
   }
   sessions.sort(function (a, b) { return a.date < b.date ? -1 : 1; });
 
-  var sTab = getTab(ss, "Sessions", ["date", "day", "mode", "sets", "headline", "qlCheck", "id"]);
-  var setTab = getTab(ss, "Sets", ["date", "day", "mode", "exercise", "set", "weight", "reps", "repsL", "repsR", "note", "sessionId"]);
+  var sTab = getTab(ss, "Sessions", ["date", "day", "mode", "sets", "headline", "qlCheck", "hold", "id"]);
+  var setTab = getTab(ss, "Sets", ["date", "day", "mode", "exercise", "set", "weight", "reps", "repsL", "repsR", "note", "hold", "sessionId"]);
   clearBelowHeader(sTab);
   clearBelowHeader(setTab);
 
@@ -105,11 +105,11 @@ function rebuildReadable(ss, kv) {
           st.reps == null ? "" : st.reps,
           st.repsL == null ? "" : st.repsL,
           st.repsR == null ? "" : st.repsR,
-          ex.note || "", s.id]);
+          ex.note || "", s.hold ? "hold" : "", s.id]);
       });
       if (!headline && (ex.sets || []).length) headline = ex.name;
     });
-    sRows.push([s.date, s.dayType, s.mode, nSets, headline, s.qlCheck || "", s.id]);
+    sRows.push([s.date, s.dayType, s.mode, nSets, headline, s.qlCheck || "", s.hold ? "hold" : "", s.id]);
   });
   if (sRows.length) sTab.getRange(2, 1, sRows.length, sRows[0].length).setValues(sRows);
   if (setRows.length) setTab.getRange(2, 1, setRows.length, setRows[0].length).setValues(setRows);
@@ -131,10 +131,12 @@ function rebuildReadable(ss, kv) {
 
 function getTab(ss, name, headers) {
   var sheet = ss.getSheetByName(name);
-  if (!sheet) {
-    sheet = ss.insertSheet(name);
-    sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight("bold");
-  }
+  if (!sheet) sheet = ss.insertSheet(name);
+  // Headers always re-sync to match `headers` (not just set on first create):
+  // the readable tabs are fully rebuilt every push anyway, so this is how an
+  // existing sheet picks up a new column (e.g. "hold") after the script is
+  // updated, with no manual header edits needed.
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight("bold");
   return sheet;
 }
 

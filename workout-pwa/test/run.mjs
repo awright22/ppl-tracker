@@ -349,6 +349,85 @@ section("computeSuggestion break rules");
   });
 }
 
+section("hold sessions");
+{
+  const perf = (dateIso, weight, reps, hold) => ({ date: dateIso, sets: reps.map((r) => ({ weight, reps: r })), hold: !!hold });
+  const now = at(2026, 8, 31);
+  const rules = { returnAfterDays: 17, holdAfterDays: 12 };
+  const bench = { current: 70, increment: 5, repMin: 8, repMax: 12, warmupRamp: true };
+  const stack = { current: 120, increment: 5, repMin: 10, repMax: 12 };
+
+  test("findRecentPerfs tags each perf with the session's hold flag", () => {
+    const sessions = [
+      { id: "s2", date: iso(2026, 8, 28), hold: true, exercises: [{ exerciseId: "bench-db", sets: [{ weight: 60, reps: 10 }] }] },
+      { id: "s1", date: iso(2026, 8, 25), exercises: [{ exerciseId: "bench-db", sets: [{ weight: 70, reps: 10 }] }] },
+    ];
+    const perfs = T.findRecentPerfs(sessions, "bench-db", 4);
+    assert.equal(perfs[0].hold, true);
+    assert.equal(perfs[1].hold, false);
+  });
+
+  test("engineVisiblePerfs drops hold perfs, keeps the rest in order", () => {
+    const perfs = [perf(iso(2026, 8, 28), 60, [10], true), perf(iso(2026, 8, 25), 70, [12, 12, 12])];
+    const visible = T.engineVisiblePerfs(perfs);
+    assert.equal(visible.length, 1);
+    assert.equal(visible[0].date, iso(2026, 8, 25));
+  });
+
+  test("holdTarget: 85% for ramped compounds, 90% flat, snapped to increment", () => {
+    assert.equal(T.holdTarget(bench, {}), 60); // 70 × 0.85 = 59.5 → 60
+    assert.equal(T.holdTarget(stack, {}), 110); // 120 × 0.90 = 108 → 110
+  });
+  test("holdTarget: rules.holdPct overrides the warmupRamp-based default", () => {
+    assert.equal(T.holdTarget(bench, { holdPct: 0.8 }), 55); // 70 × 0.8 = 56 → 55
+  });
+  test("holdTarget: never rounds to a no-op", () => {
+    const tiny = { current: 10, increment: 5, warmupRamp: false };
+    assert.ok(T.holdTarget(tiny, {}) < 10);
+  });
+
+  test("a hold day is invisible to the deload streak — doesn't count, doesn't break it", () => {
+    // Two real failing sessions at the current weight with a hold day sandwiched
+    // in between: the streak should read exactly as if the hold day weren't there.
+    const perfs = [
+      perf(iso(2026, 8, 30), 108, [10], true), // hold day: lighter weight, doesn't count
+      perf(iso(2026, 8, 27), 120, [8, 7, 6]),
+      perf(iso(2026, 8, 24), 120, [8, 7, 7]),
+    ];
+    const withHold = T.computeSuggestion(stack, T.engineVisiblePerfs(perfs), { now, rules });
+    const withoutHoldRow = T.computeSuggestion(stack, [perfs[1], perfs[2]], { now, rules });
+    assert.equal(withHold.kind, "deload");
+    assert.deepEqual(withHold, withoutHoldRow);
+  });
+
+  test("break modifier keys off the last non-hold perf date, not a more recent hold day", () => {
+    // Last real session was 14 days ago (12-16 day band -> informational hold);
+    // a hold day 2 days ago must not reset that to "under 12 days -> bump".
+    const perfs = [
+      perf(iso(2026, 8, 29), 120, [12, 12, 12], true),
+      perf(iso(2026, 8, 17), 120, [12, 12, 12]),
+    ];
+    const s = T.computeSuggestion(stack, T.engineVisiblePerfs(perfs), { now, rules });
+    assert.equal(s.kind, "hold");
+    assert.equal(s.stale, true);
+    assert.equal(s.label, "Hold — 12+ days");
+  });
+
+  test("core-ladder graduation streak also skips hold days — a light hold day can't break it", () => {
+    const rung = { current: 5, increment: 5, repMin: 8, repMax: 15, sets: 3, progressesTo: "next-rung" };
+    const perfs = [
+      perf(iso(2026, 8, 30), 3, [10, 10, 10], true), // hold day, under ceiling — would break the streak if counted
+      perf(iso(2026, 8, 27), 5, [15, 15, 15]),
+      perf(iso(2026, 8, 24), 5, [15, 15, 15]),
+    ];
+    // Raw perfs: the hold day is newest and under-ceiling, so the naive streak is 0.
+    assert.equal(T.coreRungStreak(rung, perfs), 0);
+    // Filtered: the two real clean sessions are adjacent once the hold day is skipped.
+    const s = T.coreRungSuggestion(rung, T.engineVisiblePerfs(perfs), { now, rules });
+    assert.equal(s.kind, "rung");
+  });
+}
+
 /* ================= Task 4: QL streak, gates, prompts, slots ================= */
 
 section("qlStreak + gates");
