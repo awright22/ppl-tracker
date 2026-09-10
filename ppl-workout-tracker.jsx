@@ -2315,20 +2315,6 @@ function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, startin
         </div>
       )}
 
-      {mode === "gym" && (
-        <div className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 ${TRANS} ${
-          hold ? "border-amber-400/50 bg-zinc-900" : "border-zinc-800 bg-zinc-900"
-        }`}>
-          <div className="min-w-0">
-            <div className={`text-sm font-semibold ${hold ? "text-amber-300" : "text-zinc-100"}`}>Hold loads today</div>
-            <div className="mt-0.5 text-xs text-zinc-500">
-              CNS-limited, not muscle-limited — train lighter, don't move progression either way.
-            </div>
-          </div>
-          <ToggleBtn value={hold} onChange={setHold} />
-        </div>
-      )}
-
       <div className="flex flex-col gap-3">
         {nextDay === "upper" && (
           <button
@@ -2463,6 +2449,20 @@ function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, startin
           </div>
         </div>
       </div>
+
+      {mode === "gym" && (
+        <div className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 ${TRANS} ${
+          hold ? "border-amber-400/50 bg-zinc-900" : "border-zinc-800 bg-zinc-900"
+        }`}>
+          <div className="min-w-0">
+            <div className={`text-sm font-semibold ${hold ? "text-amber-300" : "text-zinc-100"}`}>Hold loads today</div>
+            <div className="mt-0.5 text-xs text-zinc-500">
+              CNS-limited, not muscle-limited — train lighter, don't move progression either way.
+            </div>
+          </div>
+          <ToggleBtn value={hold} onChange={setHold} />
+        </div>
+      )}
 
       {index.length === 0 && (
         <div className="text-center text-xs text-zinc-600">
