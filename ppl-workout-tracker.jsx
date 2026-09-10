@@ -3074,15 +3074,21 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, onAccept
         (() => {
           const ramp = rampWeights(Number(ex.pending.weight) || 0, ex.increment);
           const stages = [
-            { key: "light", label: "light", reps: 10 },
-            { key: "half", label: fmtW(ramp.half), reps: 8 },
-            { key: "threeQ", label: fmtW(ramp.threeQ), reps: 4 },
+            { key: "light", label: "light", weight: null, reps: 10 },
+            { key: "half", label: fmtW(ramp.half), weight: ramp.half, reps: 8 },
+            { key: "threeQ", label: fmtW(ramp.threeQ), weight: ramp.threeQ, reps: 4 },
           ];
+          const plateSide = (w) => {
+            if (ex.loadType !== "plate-loaded" || w == null) return null;
+            if (ex.barWeight > 0 && w < ex.barWeight) return `below the ${fmtW(ex.barWeight)} bar`;
+            return `${ex.barWeight > 0 ? `${fmtW(ex.barWeight)} bar + ` : ""}per side ${plateBreakdown(w, ex.barWeight) || "—"}`;
+          };
           return (
             <div className="mt-2 flex flex-col gap-1.5 rounded-xl bg-zinc-950 px-3 py-2 text-xs tabular-nums text-zinc-500">
               <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-600">Warm-up · check off between sets to time your rest</div>
               {stages.map((s) => {
                 const done = !!warmupDone[s.key];
+                const side = plateSide(s.weight);
                 return (
                   <button
                     key={s.key}
@@ -3098,6 +3104,7 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, onAccept
                     </span>
                     <span className={done ? "text-zinc-600 line-through" : "text-zinc-300"}>
                       <span className="font-semibold">{s.label}</span> ×{s.reps}
+                      {side && <span className="ml-1 text-zinc-600">({side})</span>}
                     </span>
                   </button>
                 );
