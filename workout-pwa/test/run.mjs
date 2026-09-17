@@ -367,13 +367,6 @@ section("hold sessions");
     assert.equal(perfs[1].hold, false);
   });
 
-  test("engineVisiblePerfs drops hold perfs, keeps the rest in order", () => {
-    const perfs = [perf(iso(2026, 8, 28), 60, [10], true), perf(iso(2026, 8, 25), 70, [12, 12, 12])];
-    const visible = T.engineVisiblePerfs(perfs);
-    assert.equal(visible.length, 1);
-    assert.equal(visible[0].date, iso(2026, 8, 25));
-  });
-
   test("holdTarget: 85% for ramped compounds, 90% flat, snapped to increment", () => {
     assert.equal(T.holdTarget(bench, {}), 60); // 70 × 0.85 = 59.5 → 60
     assert.equal(T.holdTarget(stack, {}), 110); // 120 × 0.90 = 108 → 110
@@ -386,31 +379,51 @@ section("hold sessions");
     assert.ok(T.holdTarget(tiny, {}) < 10);
   });
 
-  test("a hold day is invisible to the deload streak — doesn't count, doesn't break it", () => {
-    // Two real failing sessions at the current weight with a hold day sandwiched
-    // in between: the streak should read exactly as if the hold day weren't there.
+  // A hold day resets the break clock (it's real time under the bar — "days
+  // since last exposure" shouldn't treat it as a no-show) but stays invisible
+  // to bump/build/deload progression, which reasons only about real perfs.
+  // computeSuggestion/coreRungSuggestion/coreRungStreak now take the full,
+  // unfiltered perf list and do this split internally.
+
+  test("a hold day today keeps the break clock fresh — no 17+ day return", () => {
+    // Last REAL session was 18 days ago (would normally trigger "return"),
+    // but a hold day today means the exercise wasn't actually untouched.
     const perfs = [
-      perf(iso(2026, 8, 30), 108, [10], true), // hold day: lighter weight, doesn't count
-      perf(iso(2026, 8, 27), 120, [8, 7, 6]),
-      perf(iso(2026, 8, 24), 120, [8, 7, 7]),
+      perf(iso(2026, 8, 31), 100, [10, 10, 10], true), // hold day: today
+      perf(iso(2026, 8, 13), 120, [12, 12, 12]), // real, 18 days ago
     ];
-    const withHold = T.computeSuggestion(stack, T.engineVisiblePerfs(perfs), { now, rules });
-    const withoutHoldRow = T.computeSuggestion(stack, [perfs[1], perfs[2]], { now, rules });
-    assert.equal(withHold.kind, "deload");
-    assert.deepEqual(withHold, withoutHoldRow);
+    const s = T.computeSuggestion(stack, perfs, { now, rules });
+    assert.notEqual(s.kind, "return");
+    assert.equal(s.kind, "bump"); // real perf still reads as an earned bump
+    assert.equal(s.target, 125);
   });
 
-  test("break modifier keys off the last non-hold perf date, not a more recent hold day", () => {
-    // Last real session was 14 days ago (12-16 day band -> informational hold);
-    // a hold day 2 days ago must not reset that to "under 12 days -> bump".
+  test("a hold day today keeps the clock under the holdAfterDays threshold too", () => {
+    // Last real session was 13 days ago — 12-16 day band would normally
+    // downgrade an earned bump to a stale "Hold — 12+ days". A hold day
+    // today means the clock reads 0, not 13, so the bump stands.
     const perfs = [
-      perf(iso(2026, 8, 29), 120, [12, 12, 12], true),
-      perf(iso(2026, 8, 17), 120, [12, 12, 12]),
+      perf(iso(2026, 8, 31), 100, [10, 10, 10], true),
+      perf(iso(2026, 8, 18), 120, [12, 12, 12]), // real, 13 days ago
     ];
-    const s = T.computeSuggestion(stack, T.engineVisiblePerfs(perfs), { now, rules });
-    assert.equal(s.kind, "hold");
-    assert.equal(s.stale, true);
-    assert.equal(s.label, "Hold — 12+ days");
+    const s = T.computeSuggestion(stack, perfs, { now, rules });
+    assert.equal(s.kind, "bump");
+  });
+
+  test("no hold day: an 18-day-old real perf still returns as before (unchanged)", () => {
+    const s = T.computeSuggestion(stack, [perf(iso(2026, 8, 13), 120, [12, 12, 12])], { now, rules });
+    assert.equal(s.kind, "return");
+  });
+
+  test("a hold day never feeds the deload streak, even as a floor failure at the current weight", () => {
+    const holdFail = perf(iso(2026, 8, 30), 120, [8, 7, 6], true); // 2 sets under floor, but it's a hold day
+    const realFail = perf(iso(2026, 8, 27), 120, [8, 7, 7]); // 1 real floor failure
+    // Hold day present: only 1 real floor failure at this weight -> streak of 1, not deload.
+    const withHold = T.computeSuggestion(stack, [holdFail, realFail], { now, rules });
+    assert.notEqual(withHold.kind, "deload");
+    // Same shape, but the newer failure is real too -> streak of 2 -> deload.
+    const bothReal = T.computeSuggestion(stack, [{ ...holdFail, hold: false }, realFail], { now, rules });
+    assert.equal(bothReal.kind, "deload");
   });
 
   test("core-ladder graduation streak also skips hold days — a light hold day can't break it", () => {
@@ -420,10 +433,10 @@ section("hold sessions");
       perf(iso(2026, 8, 27), 5, [15, 15, 15]),
       perf(iso(2026, 8, 24), 5, [15, 15, 15]),
     ];
-    // Raw perfs: the hold day is newest and under-ceiling, so the naive streak is 0.
-    assert.equal(T.coreRungStreak(rung, perfs), 0);
-    // Filtered: the two real clean sessions are adjacent once the hold day is skipped.
-    const s = T.coreRungSuggestion(rung, T.engineVisiblePerfs(perfs), { now, rules });
+    // coreRungStreak filters holds internally: the two real clean sessions are
+    // adjacent once the hold day is skipped, so the streak is 2, not 0.
+    assert.equal(T.coreRungStreak(rung, perfs), 2);
+    const s = T.coreRungSuggestion(rung, perfs, { now, rules });
     assert.equal(s.kind, "rung");
   });
 }

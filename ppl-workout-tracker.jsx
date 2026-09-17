@@ -429,9 +429,15 @@ export function roundToIncrement(value, increment, avoid) {
   return Math.max(inc, round2(t));
 }
 
-// perfs: newest-first performances of ONE exercise (each { sets }).
-// Rules: set 1 at the ceiling AND all sets at/above the floor -> bump;
-// set 1 at the ceiling but a set under the floor -> hold & rebuild;
+// perfs: newest-first performances of ONE exercise (each { sets, hold? }).
+// A "hold" session (CNS-limited day, loads deliberately reduced) counts as
+// recent exposure for the break clock below — it's still real time under the
+// bar — but stays invisible to bump/build/deload progression: `real` (perfs
+// with hold perfs stripped out) is what set 1/floor/streak logic reasons
+// about, so a hold day can never trigger a bump, count as a floor failure,
+// or feed the deload streak.
+// Rules (on `real`): set 1 at the ceiling AND all sets at/above the floor ->
+// bump; set 1 at the ceiling but a set under the floor -> hold & rebuild;
 // set 1 under the ceiling, all in range -> hold & add reps;
 // 2+ consecutive sessions AT THE CURRENT WEIGHT with MULTIPLE sets under the
 // floor -> suggest a drop. Failures at a different (older) weight say nothing
@@ -440,16 +446,21 @@ export function roundToIncrement(value, increment, avoid) {
 // opts { now, rules, gateOpen }: with `now`, break rules run first — an
 // exercise untouched >= returnAfterDays restarts at 85% (ramped compound) /
 // 90%, and one untouched >= holdAfterDays turns a would-be bump into a hold.
+// "Untouched" is measured from perfs[0] (newest of any kind, holds included),
+// not from `real[0]` — a hold session today keeps the clock fresh even
+// though it can't otherwise move progression.
 // gateOpen === false (a closed QL gate at session start) also blocks bumps.
 export function computeSuggestion(ex, perfs, opts = {}) {
   if (!Array.isArray(perfs) || perfs.length === 0) return null;
-  const last = perfs[0];
+  const real = perfs.filter((p) => !p.hold);
+  if (real.length === 0) return null;
+  const last = real[0];
   if (!last || !Array.isArray(last.sets) || last.sets.length === 0) return null;
   const cur = Number(ex.current) || 0;
   const repsOf = (perf) => perf.sets.map((s) => setEffectiveReps(s, ex.unilateral));
 
   const rules = opts.rules || {};
-  const daysSince = opts.now ? calDaysBetween(last.date, opts.now) : 0;
+  const daysSince = opts.now ? calDaysBetween(perfs[0].date, opts.now) : 0;
   const returnAfter = Number(rules.returnAfterDays) > 0 ? Number(rules.returnAfterDays) : 17;
   const holdAfter = Number(rules.holdAfterDays) > 0 ? Number(rules.holdAfterDays) : 12;
   if (opts.now && cur > 0 && daysSince >= returnAfter) {
@@ -458,7 +469,7 @@ export function computeSuggestion(ex, perfs, opts = {}) {
   }
 
   let streak = 0;
-  for (const perf of perfs) {
+  for (const perf of real) {
     const below = repsOf(perf).filter((v) => v < ex.repMin).length;
     const topW = Math.max(...perf.sets.map((s) => Number(s.weight) || 0));
     if (below >= 2 && Math.abs(topW - cur) < 0.01) streak += 1; else break;
@@ -496,17 +507,6 @@ export function findRecentPerfs(sessions, exerciseId, limit = 4) {
     }
   }
   return out;
-}
-
-// Perfs the suggestion engine is allowed to reason about. A "hold" session
-// (CNS-limited day, loads deliberately reduced) is invisible to progression:
-// it can't trigger a bump, can't count as a floor failure, can't feed the
-// deload streak, and doesn't reset "days since last real exposure" for the
-// break-modifier — computeSuggestion/coreRungSuggestion just see the last
-// real perf as if the hold day never happened. History display (lastPerf)
-// still shows it; only the engine's view is filtered.
-export function engineVisiblePerfs(perfs) {
-  return (perfs || []).filter((p) => !p.hold);
 }
 
 export function findLastPerf(sessions, exerciseId) {
@@ -740,10 +740,12 @@ export function activeCoreRung(coreList) {
 }
 
 // Consecutive recent performances (newest first) with EVERY set at/above the
-// rep ceiling — the ladder's graduation currency. 2+ clears the rung.
+// rep ceiling — the ladder's graduation currency. 2+ clears the rung. Hold
+// perfs are invisible here too (same as computeSuggestion's deload streak):
+// filtered out rather than counted or allowed to break the streak.
 export function coreRungStreak(ex, perfs) {
   let n = 0;
-  for (const p of perfs || []) {
+  for (const p of (perfs || []).filter((p) => !p.hold)) {
     const sets = (p && p.sets) || [];
     if (sets.length > 0 && sets.every((s) => setEffectiveReps(s, ex.unilateral) >= ex.repMax)) n += 1;
     else break;
@@ -2770,19 +2772,20 @@ function MobilityScreen({ title, subtitle, sections, doneLabel, done, onToggle, 
 // opts flows to computeSuggestion: { now, rules, gateOpen }. opts.deloadWeek
 // puts gym drafts in deload mode: 2 sets pre-filled at 90%, no bump/build.
 // opts.hold puts it in hold mode: pre-filled at rules.holdPct (85/90%,
-// warmupRamp-dependent), no suggestion — and its perfs are filtered out of
-// the engine's view (lastPerf/rep-seeding still show the real history).
+// warmupRamp-dependent), no suggestion. Perfs are passed through unfiltered —
+// computeSuggestion/coreRungSuggestion do their own hold-vs-real split
+// internally (a hold day still counts as recent exposure for the break
+// clock, just not for bump/build/deload progression).
 function buildDraftExercise(ex, sessions, mode, opts = {}) {
   const perfs = findRecentPerfs(sessions, ex.id, 4);
   const lastPerf = perfs[0] || null;
-  const enginePerfs = engineVisiblePerfs(perfs);
   const deload = !!opts.deloadWeek && mode === "gym";
   const hold = !!opts.hold && mode === "gym";
   const suggestion = deload
     ? { kind: "deload-week", label: "Deload — 2×@90%" }
     : hold
       ? { kind: "hold-session", label: "Hold — loads not tracked" }
-      : mode === "gym" ? coreRungSuggestion(ex, enginePerfs, opts) : null; // falls through to computeSuggestion off-ladder
+      : mode === "gym" ? coreRungSuggestion(ex, perfs, opts) : null; // falls through to computeSuggestion off-ladder
   const firstSet = lastPerf && lastPerf.sets[0];
   const defR = (side) => {
     if (firstSet) {
