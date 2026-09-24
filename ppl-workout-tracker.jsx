@@ -71,20 +71,18 @@ const store = {
 export const SEED_CONFIG = {
   // QL-recovery program: daily reset + per-day warm-ups + per-day core (after lifts).
   mobility: {
-    v: 5,
+    v: 6,
     general: [
       { id: "dr-9090", name: "90/90 Breathing", dose: "1 min", note: "Feet on wall. Inhale 4s, exhale 8s." },
       { id: "dr-psoas", name: "Supine Psoas Stretch", dose: "R 90s · L 60s", note: "Edge of bed, opposite knee to chest, leg hangs." },
       { id: "dr-clam", name: "Right-Side Clam", dose: "45s", note: "Lie on L side. Open R knee, 3s hold, 10 reps." },
       { id: "dr-fig4", name: "Supine Figure-4", dose: "60s/side", note: "Ankle over knee, pull thigh in." },
       { id: "dr-hamstring", name: "Supine Hamstring Stretch", dose: "45s/side", note: "Towel around foot, leg to ceiling." },
-      { id: "dr-rock", name: "Knees-to-Chest Rock", dose: "45s", note: "Hug knees, rock side to side." },
       { id: "dr-twist", name: "Supine Spinal Twist", dose: "60s/side", note: "Knee across body, opposite arm out." },
       { id: "dr-butterfly", name: "Supine Butterfly", dose: "60s", note: "Progress check: soles together, knees fall out. R vs L symmetry." },
     ],
     push: [
       { id: "wu-p-breath", name: "90/90 Breathing", dose: "5–8 breaths", note: "Feet on wall, hips/knees 90°. Press heels in. Exhale mouth 5–8s, sigh at end. Inhale nose into lateral ribs. Pause 3–5s after exhale." },
-      { id: "wu-p-hipflexor", name: "Hip Flexor Stretch (R)", dose: "1×30s", note: "Long lunge, R foot back. Tuck tailbone + squeeze R glute first, then shift forward. R arm overhead & slightly across." },
       { id: "wu-p-pec", name: "LB Pec Release", dose: "45s/side", note: "Face wall, ball below collarbone near shoulder. Lean in, roll slowly. Hold tender spots 5–10s. Focus pec minor area." },
       { id: "wu-p-tspine", name: "Foam Roll T-Spine", dose: "45s", note: "Roller under mid-back, hands behind head. Extend over roller. Move 1 inch per segment. Low back stays still." },
       { id: "wu-p-needle", name: "Thread-the-Needle", dose: "6/side", note: "Hands & knees. Slide R hand under L arm, R shoulder drops. Reverse — rotate R hand to ceiling. Slow, feel mid-back." },
@@ -95,11 +93,11 @@ export const SEED_CONFIG = {
     ],
     pull: [
       { id: "wu-l-breath", name: "90/90 Breathing", dose: "5–8 breaths", note: "Feet on wall, hips/knees 90°. Press heels in. Exhale mouth 5–8s, sigh at end. Inhale nose into lateral ribs. Pause 3–5s after exhale." },
-      { id: "wu-l-hipflexor", name: "Hip Flexor Stretch (R)", dose: "1×30s", note: "Long lunge, R foot back. Tuck tailbone + squeeze R glute first, then shift forward. R arm overhead & slightly across." },
-      { id: "wu-l-qlrelease", name: "LB QL Release (R)", dose: "~2 min", badge: "Phase out", note: "Side-lying R side, ball above iliac crest, lateral to erectors. 5/10 pressure. Hold spots 20–30s. Stay below 12th rib. Deep sick ache = kidney → reposition." },
       { id: "wu-l-lats", name: "Foam Roll Lats", dose: "45s/side", note: "Side-lying, roller under armpit. Arm overhead, thumb up. Roll armpit to mid-ribcage. Hold tender spots 5–10s." },
       { id: "wu-l-tspine", name: "Foam Roll T-Spine", dose: "45s", note: "Roller under mid-back, hands behind head. Extend over roller. Move 1 inch per segment. Low back stays still." },
       { id: "wu-l-deadbug", name: "Dead Bugs", dose: "2×8/side", note: "On back, arms up, knees 90°. Press low back flat. Lower opposite arm/leg. Teaches bracing for rows." },
+      { id: "wu-l-slbridge", name: "SL Glute Bridge (L-first)", dose: "L 2×10 · R 1×10", note: "3s hold at top. Left first. Heel drive, ribs down, no lumbar arch. Hamstring cramp = shorten ROM. Only the left progresses until it matches right." },
+      { id: "wu-l-sideplank", name: "Side Plank + Hip Abduction (L-first)", dose: "L 2×8 · R 1×8", note: "Left forearm down first. Top leg abducts, toes forward. Hip sags or rolls back = end set. Knee-bent regression OK (no kneecap load). Only the left progresses until it matches right." },
       { id: "wu-l-bandwalk", name: "Lateral Band Walk", dose: "10 steps/way", note: "Mini band above ankles, quarter-squat. Lead with heel, toes forward. Control trail leg. Stay low." },
       { id: "wu-l-quadrot", name: "Quad. T-Spine Rotations", dose: "8/side", note: "Hands & knees, R hand behind head. R elbow to L wrist, then to ceiling. Eyes follow. Hips stay square." },
       { id: "wu-l-scapdown", name: "Cable Scap Pull-Downs", dose: "12–15", note: "Cable high, lightest, wide bar. Arms extended. Pull scaps down & together without bending elbows. Hold 1s.", gymOnly: true },
@@ -108,16 +106,15 @@ export const SEED_CONFIG = {
     ],
     legs: [
       { id: "wu-g-breath", name: "90/90 Breathing", dose: "5–8 breaths", note: "Feet on wall, hips/knees 90°. Press heels in. Exhale mouth 5–8s, sigh at end. Inhale nose into lateral ribs. Pause 3–5s after exhale." },
-      { id: "wu-g-hipflexor", name: "Hip Flexor Stretch (R)", dose: "1×30s", note: "Long lunge, R foot back. Tuck tailbone + squeeze R glute first, then shift forward. R arm overhead & slightly across." },
-      { id: "wu-g-qlrelease", name: "LB QL Release (R)", dose: "~2 min", badge: "Phase out", note: "Side-lying R side, ball above iliac crest, lateral to erectors. 5/10 pressure. Hold spots 20–30s. Stay below 12th rib. Deep sick ache = kidney → reposition." },
       { id: "wu-g-tfl", name: "Foam Roll R TFL", dose: "90s", note: "Side-lying, roller just below front of hip bone (ASIS). Small rolls over the TFL bulb. Hold tender spots 10s. Releases lateral pelvic tilt contributor." },
-      { id: "wu-g-glutefig4", name: "LB R Glute (figure-4)", dose: "~2 min", note: "Sit on floor, cross R ankle over L knee. Lacrosse ball under R glute. Find tender spot → hold pressure + bend/straighten knee 5–10× for active release." },
+      { id: "wu-g-slbridge", name: "SL Glute Bridge (L-first)", dose: "L 2×10 · R 1×10", note: "3s hold at top. Left first. Heel drive, ribs down, no lumbar arch. Hamstring cramp = shorten ROM. Only the left progresses until it matches right." },
+      { id: "wu-g-sideplank", name: "Side Plank + Hip Abduction (L-first)", dose: "L 2×8 · R 1×8", note: "Left forearm down first. Top leg abducts, toes forward. Hip sags or rolls back = end set. Knee-bent regression OK (no kneecap load). Only the left progresses until it matches right." },
       { id: "wu-g-bandwalk", name: "Lateral Band Walk", dose: "10 steps/way", note: "Mini band above ankles, quarter-squat. Lead with heel, toes forward. Control trail leg. Stay low." },
     ],
     // The old checkbox core moved to config.core as real logged exercises
-    // (v5). Side-plank R/L symmetry and the right SL glute bridge are still
-    // Phase 1→2 advancement testers — retest them even though they're no
-    // longer programmed here.
+    // (v5). Side plank and SL glute bridge are back as L-first warm-ups on
+    // pull + legs (v6) and remain the Phase 1→2 advancement testers: side-plank
+    // R/L symmetry and SL bridge R/L parity.
     core: { push: [], pull: [], legs: [] },
   },
   // After-lifts core: real logged exercises in their own section, kept out of
