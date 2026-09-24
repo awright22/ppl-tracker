@@ -2483,7 +2483,7 @@ function LoggingScreen({ draft, index, mutateDraft, onFinish, onDiscard, onAccep
     warmSections = [
       {
         title: "Daily reset",
-        sub: "~12 min · floor · no equipment",
+        sub: "~10 min · floor · no equipment",
         foot: "Daily for 2 weeks before evaluating. Markers: butterfly knee symmetry + right figure-4 range vs left.",
         items: wu.general,
       },
