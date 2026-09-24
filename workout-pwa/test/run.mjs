@@ -782,8 +782,19 @@ section("core ladder");
     assert.equal(T.SEED_CONFIG.core[0].progressesTo, "cchair-straight");
     assert.equal(T.SEED_CONFIG.core[1].progressesTo, "cchair-weighted");
     assert.equal(T.SEED_CONFIG.core[2].progressesTo, undefined);
-    assert.equal(T.SEED_CONFIG.mobility.v, 5);
+    assert.ok(T.SEED_CONFIG.mobility.v >= 5);
     assert.deepEqual(T.SEED_CONFIG.mobility.core, { push: [], pull: [], legs: [] });
+  });
+  test("mobility v6: skipped warm-ups cut, L-first glute activation before the band walk", () => {
+    const m = T.SEED_CONFIG.mobility;
+    assert.equal(m.v, 6);
+    const ids = (list) => list.map((it) => it.id);
+    assert.deepEqual(ids(m.pull), ["wu-l-breath", "wu-l-lats", "wu-l-tspine", "wu-l-deadbug", "wu-l-slbridge", "wu-l-sideplank", "wu-l-bandwalk", "wu-l-quadrot", "wu-l-scapdown", "wu-l-sapd", "wu-l-facepull"]);
+    assert.deepEqual(ids(m.legs), ["wu-g-breath", "wu-g-tfl", "wu-g-slbridge", "wu-g-sideplank", "wu-g-bandwalk"]);
+    const all = new Set([...m.general, ...m.push, ...m.pull, ...m.legs].map((it) => it.id));
+    for (const gone of ["dr-rock", "wu-p-hipflexor", "wu-l-hipflexor", "wu-l-qlrelease", "wu-g-hipflexor", "wu-g-qlrelease", "wu-g-glutefig4"]) {
+      assert.ok(!all.has(gone), gone);
+    }
   });
   test("activeCoreRung: first non-graduated entry", () => {
     assert.equal(T.activeCoreRung(T.SEED_CONFIG.core).id, "cchair-bent");
