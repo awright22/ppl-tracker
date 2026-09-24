@@ -71,15 +71,15 @@ const store = {
 export const SEED_CONFIG = {
   // QL-recovery program: daily reset + per-day warm-ups + per-day core (after lifts).
   mobility: {
-    v: 6,
+    v: 7,
     general: [
       { id: "dr-9090", name: "90/90 Breathing", dose: "1 min", note: "Feet on wall. Inhale 4s, exhale 8s." },
       { id: "dr-psoas", name: "Supine Psoas Stretch", dose: "R 90s · L 60s", note: "Edge of bed, opposite knee to chest, leg hangs." },
       { id: "dr-clam", name: "Right-Side Clam", dose: "45s", note: "Lie on L side. Open R knee, 3s hold, 10 reps." },
       { id: "dr-fig4", name: "Supine Figure-4", dose: "60s/side", note: "Ankle over knee, pull thigh in." },
       { id: "dr-hamstring", name: "Supine Hamstring Stretch", dose: "45s/side", note: "Towel around foot, leg to ceiling." },
-      { id: "dr-twist", name: "Supine Spinal Twist", dose: "60s/side", note: "Knee across body, opposite arm out." },
-      { id: "dr-butterfly", name: "Supine Butterfly", dose: "60s", note: "Progress check: soles together, knees fall out. R vs L symmetry." },
+      { id: "dr-twist", name: "Supine Spinal Twist", dose: "30s/side", note: "Knee across body, opposite arm out." },
+      { id: "dr-butterfly", name: "Supine Butterfly", dose: "30s", note: "Progress check: soles together, knees fall out. R vs L symmetry." },
     ],
     push: [
       { id: "wu-p-breath", name: "90/90 Breathing", dose: "5–8 breaths", note: "Feet on wall, hips/knees 90°. Press heels in. Exhale mouth 5–8s, sigh at end. Inhale nose into lateral ribs. Pause 3–5s after exhale." },
@@ -87,14 +87,11 @@ export const SEED_CONFIG = {
       { id: "wu-p-tspine", name: "Foam Roll T-Spine", dose: "45s", note: "Roller under mid-back, hands behind head. Extend over roller. Move 1 inch per segment. Low back stays still." },
       { id: "wu-p-needle", name: "Thread-the-Needle", dose: "6/side", note: "Hands & knees. Slide R hand under L arm, R shoulder drops. Reverse — rotate R hand to ceiling. Slow, feel mid-back." },
       { id: "wu-p-extrot", name: "Cable Ext. Rotations", dose: "15/arm", note: "Cable at elbow height, lightest. Sideways, far hand. Pin elbow at 90°. Rotate forearm out. Slow return.", gymOnly: true },
-      { id: "wu-p-facepull", name: "Cable Face Pulls", dose: "15–20", note: "Cable face height, light. Rope, palms down. Pull to face, split rope. Elbows high & wide. Squeeze scaps 1s.", gymOnly: true },
-      { id: "wu-p-scappush", name: "Scapular Push-Ups", dose: "10", note: "Push-up position, arms locked. Sink chest between scaps, push floor away, round upper back. Only scaps move." },
-      { id: "wu-p-pushup", name: "Push-Ups", dose: "8–10", note: "Hands wider than shoulders. Chest to floor. Scaps squeeze down, spread at top. Bench rehearsal." },
+      { id: "wu-p-pushup", name: "Push-Ups", dose: "8–10", note: "Hands wider than shoulders. Chest to floor. 1s scap protraction at the top (push the floor away). Bench rehearsal." },
     ],
     pull: [
       { id: "wu-l-breath", name: "90/90 Breathing", dose: "5–8 breaths", note: "Feet on wall, hips/knees 90°. Press heels in. Exhale mouth 5–8s, sigh at end. Inhale nose into lateral ribs. Pause 3–5s after exhale." },
       { id: "wu-l-lats", name: "Foam Roll Lats", dose: "45s/side", note: "Side-lying, roller under armpit. Arm overhead, thumb up. Roll armpit to mid-ribcage. Hold tender spots 5–10s." },
-      { id: "wu-l-tspine", name: "Foam Roll T-Spine", dose: "45s", note: "Roller under mid-back, hands behind head. Extend over roller. Move 1 inch per segment. Low back stays still." },
       { id: "wu-l-deadbug", name: "Dead Bugs", dose: "2×8/side", note: "On back, arms up, knees 90°. Press low back flat. Lower opposite arm/leg. Teaches bracing for rows." },
       { id: "wu-l-slbridge", name: "SL Glute Bridge (L-first)", dose: "L 2×10 · R 1×10", note: "3s hold at top. Left first. Heel drive, ribs down, no lumbar arch. Hamstring cramp = shorten ROM. Only the left progresses until it matches right." },
       { id: "wu-l-sideplank", name: "Side Plank + Hip Abduction (L-first)", dose: "L 2×8 · R 1×8", note: "Left forearm down first. Top leg abducts, toes forward. Hip sags or rolls back = end set. Knee-bent regression OK (no kneecap load). Only the left progresses until it matches right." },
@@ -102,11 +99,10 @@ export const SEED_CONFIG = {
       { id: "wu-l-quadrot", name: "Quad. T-Spine Rotations", dose: "8/side", note: "Hands & knees, R hand behind head. R elbow to L wrist, then to ceiling. Eyes follow. Hips stay square." },
       { id: "wu-l-scapdown", name: "Cable Scap Pull-Downs", dose: "12–15", note: "Cable high, lightest, wide bar. Arms extended. Pull scaps down & together without bending elbows. Hold 1s.", gymOnly: true },
       { id: "wu-l-sapd", name: "Cable SA Pull-Downs", dose: "12–15", note: "Cable high, light. Arms at shoulder height. Pull to thighs in arc, arms straight. Squeeze lats 1s. Slow return.", gymOnly: true },
-      { id: "wu-l-facepull", name: "Cable Face Pulls", dose: "15", note: "Cable face height, light. Rope, palms down. Pull to face, split rope. Elbows high & wide. Squeeze scaps 1s.", gymOnly: true },
     ],
     legs: [
       { id: "wu-g-breath", name: "90/90 Breathing", dose: "5–8 breaths", note: "Feet on wall, hips/knees 90°. Press heels in. Exhale mouth 5–8s, sigh at end. Inhale nose into lateral ribs. Pause 3–5s after exhale." },
-      { id: "wu-g-tfl", name: "Foam Roll R TFL", dose: "90s", note: "Side-lying, roller just below front of hip bone (ASIS). Small rolls over the TFL bulb. Hold tender spots 10s. Releases lateral pelvic tilt contributor." },
+      { id: "wu-g-tfl", name: "Foam Roll R TFL", dose: "60s", note: "Side-lying, roller just below front of hip bone (ASIS). Small rolls over the TFL bulb. Hold tender spots 10s. Releases lateral pelvic tilt contributor." },
       { id: "wu-g-slbridge", name: "SL Glute Bridge (L-first)", dose: "L 2×10 · R 1×10", note: "3s hold at top. Left first. Heel drive, ribs down, no lumbar arch. Hamstring cramp = shorten ROM. Only the left progresses until it matches right." },
       { id: "wu-g-sideplank", name: "Side Plank + Hip Abduction (L-first)", dose: "L 2×8 · R 1×8", note: "Left forearm down first. Top leg abducts, toes forward. Hip sags or rolls back = end set. Knee-bent regression OK (no kneecap load). Only the left progresses until it matches right." },
       { id: "wu-g-bandwalk", name: "Lateral Band Walk", dose: "10 steps/way", note: "Mini band above ankles, quarter-squat. Lead with heel, toes forward. Control trail leg. Stay low." },

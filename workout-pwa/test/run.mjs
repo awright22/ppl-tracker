@@ -785,16 +785,23 @@ section("core ladder");
     assert.ok(T.SEED_CONFIG.mobility.v >= 5);
     assert.deepEqual(T.SEED_CONFIG.mobility.core, { push: [], pull: [], legs: [] });
   });
-  test("mobility v6: skipped warm-ups cut, L-first glute activation before the band walk", () => {
+  test("mobility v7: push/pull warm-ups trimmed, v6 glute activation kept", () => {
     const m = T.SEED_CONFIG.mobility;
-    assert.equal(m.v, 6);
+    assert.equal(m.v, 7);
     const ids = (list) => list.map((it) => it.id);
-    assert.deepEqual(ids(m.pull), ["wu-l-breath", "wu-l-lats", "wu-l-tspine", "wu-l-deadbug", "wu-l-slbridge", "wu-l-sideplank", "wu-l-bandwalk", "wu-l-quadrot", "wu-l-scapdown", "wu-l-sapd", "wu-l-facepull"]);
+    assert.deepEqual(ids(m.general), ["dr-9090", "dr-psoas", "dr-clam", "dr-fig4", "dr-hamstring", "dr-twist", "dr-butterfly"]);
+    assert.deepEqual(ids(m.push), ["wu-p-breath", "wu-p-pec", "wu-p-tspine", "wu-p-needle", "wu-p-extrot", "wu-p-pushup"]);
+    assert.deepEqual(ids(m.pull), ["wu-l-breath", "wu-l-lats", "wu-l-deadbug", "wu-l-slbridge", "wu-l-sideplank", "wu-l-bandwalk", "wu-l-quadrot", "wu-l-scapdown", "wu-l-sapd"]);
     assert.deepEqual(ids(m.legs), ["wu-g-breath", "wu-g-tfl", "wu-g-slbridge", "wu-g-sideplank", "wu-g-bandwalk"]);
     const all = new Set([...m.general, ...m.push, ...m.pull, ...m.legs].map((it) => it.id));
-    for (const gone of ["dr-rock", "wu-p-hipflexor", "wu-l-hipflexor", "wu-l-qlrelease", "wu-g-hipflexor", "wu-g-qlrelease", "wu-g-glutefig4"]) {
+    for (const gone of ["dr-rock", "wu-p-hipflexor", "wu-l-hipflexor", "wu-l-qlrelease", "wu-g-hipflexor", "wu-g-qlrelease", "wu-g-glutefig4",
+      "wu-p-facepull", "wu-p-scappush", "wu-l-facepull", "wu-l-tspine"]) {
       assert.ok(!all.has(gone), gone);
     }
+    const dose = (id) => [...m.general, ...m.legs].find((it) => it.id === id).dose;
+    assert.equal(dose("dr-twist"), "30s/side");
+    assert.equal(dose("dr-butterfly"), "30s");
+    assert.equal(dose("wu-g-tfl"), "60s");
   });
   test("activeCoreRung: first non-graduated entry", () => {
     assert.equal(T.activeCoreRung(T.SEED_CONFIG.core).id, "cchair-bent");
