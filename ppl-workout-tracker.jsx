@@ -4228,44 +4228,56 @@ function weighInIso(dayStr) {
   return new Date(p[0], p[1] - 1, p[2], 12, 0, 0).toISOString();
 }
 
-/* Weight stall detector (exported for tests). Rolling 7-day means evaluated
-   on Mondays, so Fri-dinner/Sat highs sit inside both windows instead of
-   whipsawing their edges; each window covers Tue..Mon inclusive. Weekly delta
-   = this Monday's mean − last Monday's. Stall = three consecutive deltas
-   > −0.3 lb (losing almost nothing, or gaining). A Monday with no weigh-ins
-   in its window has no mean and conservatively breaks the chain. */
-export function weightStall(weights, now = new Date()) {
-  const anchor = weekStartOf(now); // most recent Monday (local)
+/* Weight trend (exported for tests), in lb/week, over the TREND_DAYS
+   calendar days ending on `end` (inclusive). A least-squares slope fitted
+   within each weekday — Mondays against Mondays, Tuesdays against Tuesdays —
+   so the weekly cycle (post-refeed Mon–Wed highs) cancels exactly instead of
+   tilting the line by which weekday the window happens to end on. A skipped
+   day drops out of its weekday's fit; a weekday seen only once adds nothing.
+   At ~1.3 lb day-to-day scatter a full 21 days is good to about ±0.35 lb/wk,
+   vs ±0.7 for the old Monday-vs-Monday 7-day means. Too little data (fewer
+   than 6 weigh-ins, or less spread than ~two full weeks of dailies) → null. */
+const TREND_DAYS = 21;
+export function weightTrend(weights, end = new Date()) {
   const dayKey = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
   const byDay = new Map();
   for (const w of weights || []) {
     const d = new Date(w.date);
     if (!Number.isNaN(d.getTime()) && Number(w.weight) > 0) byDay.set(dayKey(d), Number(w.weight));
   }
-  const meanEndingOn = (monday) => {
-    let sum = 0;
-    let n = 0;
-    for (let k = 0; k < 7; k += 1) {
-      const v = byDay.get(dayKey(new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() - k)));
-      if (v != null) { sum += v; n += 1; }
+  const groups = Array.from({ length: 7 }, () => []); // by weekday: [x, y] pairs
+  let n = 0;
+  for (let k = 0; k < TREND_DAYS; k += 1) {
+    const d = new Date(end.getFullYear(), end.getMonth(), end.getDate() - k);
+    const v = byDay.get(dayKey(d));
+    if (v != null) { groups[d.getDay()].push([-k, v]); n += 1; }
+  }
+  let sxy = 0;
+  let sxx = 0;
+  for (const g of groups) {
+    if (g.length < 2) continue;
+    const mx = g.reduce((acc, [x]) => acc + x, 0) / g.length;
+    const my = g.reduce((acc, [, y]) => acc + y, 0) / g.length;
+    for (const [x, y] of g) {
+      sxy += (x - mx) * (y - my);
+      sxx += (x - mx) ** 2;
     }
-    return n > 0 ? sum / n : null;
-  };
-  const means = [0, 1, 2, 3].map((k) =>
-    meanEndingOn(new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() - 7 * k))
-  ); // newest first
-  const deltas = [0, 1, 2].map((i) =>
-    means[i] != null && means[i + 1] != null ? round2(means[i] - means[i + 1]) : null
-  );
-  const stalled = deltas.every((d) => d != null && d > -0.3);
-  return { means, deltas, stalled, latestDelta: deltas[0] };
+  }
+  // 171.5 = seven weekdays each seen twice, a week apart (two weeks of dailies).
+  if (n < 6 || sxx < 171.5) return null;
+  return { perWeek: round2((sxy / sxx) * 7), n, days: TREND_DAYS };
 }
 
-// Sat/Sun weigh-ins are planned refeed highs — tagged so they read as expected.
-const isWeekendIso = (iso) => {
-  const dow = new Date(iso).getDay();
-  return dow === 0 || dow === 6;
-};
+/* Weight stall detector (exported for tests). The 21-day trend checked today,
+   7 days ago and 14 days ago; stall = all three slower than −0.3 lb/wk
+   (losing almost nothing, or gaining). A check without enough data is null
+   and conservatively breaks the chain. */
+export function weightStall(weights, now = new Date()) {
+  const fits = [0, 1, 2].map((k) => weightTrend(weights, new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7 * k)));
+  const trends = fits.map((t) => (t ? t.perWeek : null)); // newest first
+  const stalled = trends.every((t) => t != null && t > -0.3);
+  return { trends, stalled, latest: trends[0], n: fits[0] ? fits[0].n : 0 };
+}
 
 // list is newest-first. Baseline = newest weigh-in at least 30 days older than
 // the latest; while history is shorter than that, the oldest entry stands in.
@@ -4379,18 +4391,22 @@ function WeightScreen({ config, weights, onLog, onDelete }) {
                 </div>
               );
             }
-            if (st.latestDelta != null) {
+            if (st.latest != null) {
               return (
                 <div className="rounded-2xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-sm text-zinc-300">
                   Weekly trend:{" "}
-                  <span className={`font-semibold tabular-nums ${st.latestDelta <= -0.3 ? "text-lime-300" : "text-amber-300"}`}>
-                    {st.latestDelta > 0 ? "+" : ""}{fmtW(st.latestDelta)} lb
+                  <span className={`font-semibold tabular-nums ${st.latest <= -0.3 ? "text-lime-300" : "text-amber-300"}`}>
+                    {st.latest > 0 ? "+" : ""}{fmtW(st.latest)} lb/wk
                   </span>{" "}
-                  <span className="text-xs text-zinc-500">vs last Monday's 7-day mean</span>
+                  <span className="text-xs text-zinc-500">best-fit line, last {TREND_DAYS} days · {st.n} weigh-ins</span>
                 </div>
               );
             }
-            return null;
+            return (
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-xs text-zinc-500">
+                Weekly trend needs about two weeks of regular weigh-ins.
+              </div>
+            );
           })()}
 
           <div className="flex rounded-xl bg-zinc-950 p-1">
@@ -4428,9 +4444,6 @@ function WeightScreen({ config, weights, onLog, onDelete }) {
               <div key={e.id} className="flex h-14 items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2 text-sm text-zinc-300">
                   <span className="truncate">{fullDate(e.date)}</span>
-                  {isWeekendIso(e.date) && (
-                    <span className="shrink-0 rounded bg-zinc-800 px-1 py-0.5 text-xs font-semibold text-zinc-500">planned high</span>
-                  )}
                 </div>
                 <div className="flex items-center gap-1">
                   <div className="text-base font-semibold tabular-nums text-zinc-100">{fmtW(e.weight)} lb</div>

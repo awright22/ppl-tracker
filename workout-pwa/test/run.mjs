@@ -655,50 +655,73 @@ section("upperTemplate + recentEntriesFor");
 
 /* ================= Task 6: weight stall detector ================= */
 
-section("weightStall");
+section("weightTrend + weightStall");
 {
   const now = at(2026, 8, 31, 9); // Monday
-  const w = (y, m, d, weight) => ({ id: `w-${y}${m}${d}`, date: iso(y, m, d, 8), weight });
-  const mondays = (vals) => [w(2026, 8, 10, vals[3]), w(2026, 8, 17, vals[2]), w(2026, 8, 24, vals[1]), w(2026, 8, 31, vals[0])];
+  // One weigh-in per day for `days` days ending `end`; f(k) = weight k days before end.
+  const series = (f, days = 21, end = now, keep = () => true) => {
+    const out = [];
+    for (let k = 0; k < days; k += 1) {
+      const d = new Date(end.getFullYear(), end.getMonth(), end.getDate() - k, 8);
+      if (keep(d)) out.push({ id: `w-${k}`, date: d.toISOString(), weight: f(k, d) });
+    }
+    return out;
+  };
+  const losing = (lbPerDay) => (k) => 200 + lbPerDay * k; // heavier k days ago = losing
 
-  test("flat weight for four Mondays = stalled", () => {
-    const st = T.weightStall(mondays([200, 200, 200, 200]), now);
-    assert.equal(st.stalled, true);
-    assert.deepEqual(st.deltas, [0, 0, 0]);
+  test("clean linear loss of 0.1 lb/day reads -0.7 lb/wk", () => {
+    const t = T.weightTrend(series(losing(0.1)), now);
+    assert.equal(t.perWeek, -0.7);
+    assert.equal(t.n, 21);
   });
-  test("gaining also reads as stalled (deltas > -0.3)", () => {
-    const st = T.weightStall(mondays([201.5, 201, 200.5, 200]), now);
+  test("a Mon-Wed post-refeed bump doesn't tilt the trend, whatever weekday the window ends on", () => {
+    const bumped = (k, d) => losing(0.1)(k) + ([1, 2, 3].includes(d.getDay()) ? 1.5 : 0);
+    for (let off = 0; off < 7; off += 1) {
+      const end = new Date(2026, 7, 31 - off, 9);
+      assert.equal(T.weightTrend(series(bumped, 21, end), end).perWeek, -0.7, `ending ${end.toDateString()}`);
+    }
+  });
+  test("skipped days (every weekend + a stray Thursday) leave the slope alone", () => {
+    const keep = (d) => d.getDay() !== 0 && d.getDay() !== 6 && !(d.getDate() === 27);
+    const t = T.weightTrend(series(losing(0.1), 21, now, keep), now);
+    assert.equal(t.perWeek, -0.7);
+    assert.ok(t.n < 21);
+  });
+  test("too little data -> null: 5 weigh-ins, or only one week of dailies", () => {
+    assert.equal(T.weightTrend(series(losing(0.1), 5), now), null);
+    assert.equal(T.weightTrend(series(losing(0.1), 7), now), null);
+    assert.notEqual(T.weightTrend(series(losing(0.1), 14), now), null); // two full weeks is enough
+  });
+  test("weigh-ins older than 21 days are ignored", () => {
+    const data = [...series(() => 200), { id: "old", date: iso(2026, 7, 1, 8), weight: 230 }];
+    assert.equal(T.weightTrend(data, now).perWeek, 0);
+  });
+
+  test("flat weight for five weeks = stalled", () => {
+    const st = T.weightStall(series(() => 200, 35), now);
+    assert.deepEqual(st.trends, [0, 0, 0]);
     assert.equal(st.stalled, true);
-    assert.equal(st.latestDelta, 0.5);
+  });
+  test("gaining also reads as stalled (trend > -0.3)", () => {
+    const st = T.weightStall(series(losing(-0.05), 35), now);
+    assert.equal(st.latest, 0.35);
+    assert.equal(st.stalled, true);
   });
   test("steady loss is not a stall", () => {
-    const st = T.weightStall(mondays([198.5, 199, 199.5, 200]), now);
+    const st = T.weightStall(series(losing(0.5 / 7), 35), now);
+    assert.equal(st.latest, -0.5);
     assert.equal(st.stalled, false);
-    assert.equal(st.latestDelta, -0.5);
   });
-  test("-0.3 exactly breaks the stall chain; -0.29 does not", () => {
-    assert.equal(T.weightStall(mondays([200.0, 200.3, 200.6, 200.9]), now).stalled, false);
-    assert.equal(T.weightStall(mondays([200.0, 200.29, 200.58, 200.87]), now).stalled, true);
+  test("-0.3 lb/wk exactly breaks the stall chain; -0.28 does not", () => {
+    assert.equal(T.weightStall(series(losing(0.3 / 7), 35), now).stalled, false);
+    assert.equal(T.weightStall(series(losing(0.28 / 7), 35), now).stalled, true);
   });
-  test("a week with no weigh-ins breaks the chain (no phantom stalls)", () => {
-    const st = T.weightStall([w(2026, 8, 10, 200), w(2026, 8, 17, 200), w(2026, 8, 31, 200)], now);
+  test("a check without enough data breaks the chain (no phantom stalls)", () => {
+    // Only the last 21 days logged: the checks 7 and 14 days back see < two weeks.
+    const st = T.weightStall(series(() => 200, 21), now);
+    assert.equal(st.latest, 0);
+    assert.equal(st.trends[2], null);
     assert.equal(st.stalled, false);
-    assert.equal(st.latestDelta, null); // Aug 24 window is empty
-  });
-  test("windows are Tue..Mon: Fri/Sat highs live inside, means average the window", () => {
-    // Current window (Aug 25 - 31): 199 on Wed, 203 refeed Sat, 200 Mon -> mean 200.67
-    // Prior window: flat 201.67 equivalent via three entries.
-    const data = [
-      w(2026, 8, 26, 199), w(2026, 8, 29, 203), w(2026, 8, 31, 200),
-      w(2026, 8, 19, 200), w(2026, 8, 22, 204), w(2026, 8, 24, 201),
-    ];
-    const st = T.weightStall(data, now);
-    assert.equal(Math.round(st.means[0] * 100) / 100, Math.round(((199 + 203 + 200) / 3) * 100) / 100);
-    assert.equal(st.latestDelta, Math.round(((199 + 203 + 200) / 3 - (200 + 204 + 201) / 3) * 100) / 100);
-  });
-  test("weigh-ins outside the four windows are ignored", () => {
-    const st = T.weightStall([w(2026, 7, 1, 190), ...mondays([200, 200, 200, 200])], now);
-    assert.deepEqual(st.deltas, [0, 0, 0]);
   });
 }
 
