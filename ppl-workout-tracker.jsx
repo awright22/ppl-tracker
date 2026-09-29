@@ -108,9 +108,9 @@ export const SEED_CONFIG = {
       { id: "wu-g-sideplank", name: "Side Plank + Hip Abduction (L-first)", dose: "L 2×8 · R 1×8", note: "Left forearm down first. Top leg abducts, toes forward. Hip sags or rolls back = end set. Knee-bent regression OK (no kneecap load). Only the left progresses until it matches right." },
       { id: "wu-g-bandwalk", name: "Lateral Band Walk", dose: "10 steps/way", note: "Mini band above ankles, quarter-squat. Lead with heel, toes forward. Control trail leg. Stay low." },
     ],
-    // Pre-run, live GPS runs only. Standing, no equipment — after the lift-day
-    // warm-up or on its own. Not routed through warmupItemsFor: nothing here
-    // should dedupe against the daily reset.
+    // Pre-run. Standing, no equipment — after the lift-day warm-up or on its
+    // own. Not routed through warmupItemsFor: nothing here should dedupe
+    // against the daily reset.
     run: [
       { id: "wu-r-calf", name: "Curb Calf Raises", dose: "15 double + 8/side single", note: "Heel off a curb. Full stretch at the bottom, slow eccentric. Plantar-fascia loading, not just a warm-up." },
       { id: "wu-r-kickback", name: "Standing Glute Kickbacks", dose: "12/side · L first", note: "Hand on a pole. Kick straight back, 1s squeeze. Glute drives it — no lumbar arch." },
@@ -246,7 +246,7 @@ function coreItemsFor(mobility, dayType, mode) {
 }
 // Pre-run checklist snapshot, same shape as a lift session's `warmup` so
 // History and the session viewer render it unchanged. Null when there's no
-// list (older config) or no checklist was shown (manual entry).
+// list (older config) or no checklist state was passed.
 export function runWarmupSnapshot(mobility, warmupDone) {
   const items = mobility && Array.isArray(mobility.run) ? mobility.run : [];
   if (!warmupDone || items.length === 0) return null;
@@ -3938,13 +3938,39 @@ export function haversineMeters(a, b) {
    distance across a gap is bridged as the straight line between fixes. */
 function RunOverlay({ mode, mobility, onSave, onClose, pushToast }) {
   const [entryMode, setEntryMode] = useState(mode); // "live" | "manual" — denied GPS can fall back
-  // Pre-run checklist (live runs only). Overlay-local on purpose: a run in
-  // progress doesn't survive a reload either.
+  // Pre-run checklist, live and manual alike. Overlay-local on purpose: a run
+  // in progress doesn't survive a reload either.
   const runWarmup = (mobility && mobility.run) || [];
   const [warmupDone, setWarmupDone] = useState({});
   const [warmupOpen, setWarmupOpen] = useState(true);
   const toggleWarmup = (id) => setWarmupDone((d) => ({ ...d, [id]: !d[id] }));
   const warmupDoneCount = runWarmup.filter((it) => warmupDone[it.id]).length;
+  const warmupCard = runWarmup.length > 0 ? (
+    <section className="rounded-2xl border border-zinc-800 bg-zinc-900">
+      <button
+        onClick={() => setWarmupOpen((o) => !o)}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left"
+        aria-expanded={warmupOpen}
+      >
+        <Flame size={18} className="shrink-0 text-lime-400" />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-semibold text-zinc-100">Pre-run warm-up</div>
+          <div className="text-xs text-zinc-500">Standing, no equipment · check them off as you go</div>
+        </div>
+        <span className={`shrink-0 text-xs font-semibold tabular-nums ${warmupDoneCount >= runWarmup.length ? "text-lime-400" : "text-zinc-500"}`}>
+          {warmupDoneCount}/{runWarmup.length}
+        </span>
+        <ChevronRight size={16} className={`shrink-0 text-zinc-600 ${TRANS} ${warmupOpen ? "rotate-90" : ""}`} />
+      </button>
+      {warmupOpen && (
+        <div className="flex flex-col divide-y divide-zinc-800 border-t border-zinc-800">
+          {runWarmup.map((it) => (
+            <WarmupRow key={it.id} item={it} checked={!!warmupDone[it.id]} onToggle={() => toggleWarmup(it.id)} />
+          ))}
+        </div>
+      )}
+    </section>
+  ) : null;
   const todayStr = dateInputVal(new Date());
   const [dayStr, setDayStr] = useState(todayStr);
   const [manMiles, setManMiles] = useState(3);
@@ -4078,7 +4104,7 @@ function RunOverlay({ mode, mobility, onSave, onClose, pushToast }) {
       const startAt = new Date(end.getTime() - secs * 1000);
       await onSave({
         startIso: startAt.toISOString(), endIso: end.toISOString(),
-        miles: round2(Number(manMiles)), seconds: secs, splits: [], source: "manual",
+        miles: round2(Number(manMiles)), seconds: secs, splits: [], source: "manual", warmupDone,
       });
     } finally { setSaving(false); }
   };
@@ -4124,32 +4150,7 @@ function RunOverlay({ mode, mobility, onSave, onClose, pushToast }) {
                     Your location never leaves the phone; only distance, time, and mile splits are saved.
                   </div>
                 </div>
-                {runWarmup.length > 0 && (
-                  <section className="rounded-2xl border border-zinc-800 bg-zinc-900">
-                    <button
-                      onClick={() => setWarmupOpen((o) => !o)}
-                      className="flex w-full items-center gap-3 px-4 py-3 text-left"
-                      aria-expanded={warmupOpen}
-                    >
-                      <Flame size={18} className="shrink-0 text-lime-400" />
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-semibold text-zinc-100">Pre-run warm-up</div>
-                        <div className="text-xs text-zinc-500">Standing, no equipment · check them off as you go</div>
-                      </div>
-                      <span className={`shrink-0 text-xs font-semibold tabular-nums ${warmupDoneCount >= runWarmup.length ? "text-lime-400" : "text-zinc-500"}`}>
-                        {warmupDoneCount}/{runWarmup.length}
-                      </span>
-                      <ChevronRight size={16} className={`shrink-0 text-zinc-600 ${TRANS} ${warmupOpen ? "rotate-90" : ""}`} />
-                    </button>
-                    {warmupOpen && (
-                      <div className="flex flex-col divide-y divide-zinc-800 border-t border-zinc-800">
-                        {runWarmup.map((it) => (
-                          <WarmupRow key={it.id} item={it} checked={!!warmupDone[it.id]} onToggle={() => toggleWarmup(it.id)} />
-                        ))}
-                      </div>
-                    )}
-                  </section>
-                )}
+                {warmupCard}
                 <button onClick={start} className={`h-14 w-full rounded-2xl bg-lime-400 text-base font-bold text-black active:bg-lime-300 ${TRANS}`}>
                   Start run
                 </button>
@@ -4233,6 +4234,7 @@ function RunOverlay({ mode, mobility, onSave, onClose, pushToast }) {
 
         {entryMode === "manual" && (
           <div className="flex flex-col gap-4 pt-4">
+            {warmupCard}
             <div className="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
               <div className="flex items-center justify-between gap-3">
                 <div className="text-sm font-semibold text-zinc-100">Log a run</div>

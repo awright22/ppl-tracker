@@ -712,7 +712,7 @@ section("runWarmupSnapshot");
     assert.deepEqual(snap.map((w) => w.done), [true, false, false, false, true]);
     assert.ok(snap.every((w) => typeof w.name === "string" && !("dose" in w)));
   });
-  test("manual entry (no checklist shown) or a config without a run list -> null, not an all-false list", () => {
+  test("no checklist state, or a config without a run list -> null, not an all-false list", () => {
     assert.equal(T.runWarmupSnapshot(m, undefined), null);
     assert.equal(T.runWarmupSnapshot({ v: 7, general: [] }, {}), null);
     assert.equal(T.runWarmupSnapshot(null, {}), null);
