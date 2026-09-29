@@ -69,9 +69,10 @@ const store = {
 /* ---------- seed config ---------- */
 
 export const SEED_CONFIG = {
-  // QL-recovery program: daily reset + per-day warm-ups + per-day core (after lifts).
+  // QL-recovery program: daily reset + per-day warm-ups + per-day core (after lifts)
+  // + a standing pre-run list for GPS runs.
   mobility: {
-    v: 7,
+    v: 8,
     general: [
       { id: "dr-9090", name: "90/90 Breathing", dose: "1 min", note: "Feet on wall. Inhale 4s, exhale 8s." },
       { id: "dr-psoas", name: "Supine Psoas Stretch", dose: "R 90s · L 60s", note: "Edge of bed, opposite knee to chest, leg hangs." },
@@ -106,6 +107,16 @@ export const SEED_CONFIG = {
       { id: "wu-g-slbridge", name: "SL Glute Bridge (L-first)", dose: "L 2×10 · R 1×10", note: "3s hold at top. Left first. Heel drive, ribs down, no lumbar arch. Hamstring cramp = shorten ROM. Only the left progresses until it matches right." },
       { id: "wu-g-sideplank", name: "Side Plank + Hip Abduction (L-first)", dose: "L 2×8 · R 1×8", note: "Left forearm down first. Top leg abducts, toes forward. Hip sags or rolls back = end set. Knee-bent regression OK (no kneecap load). Only the left progresses until it matches right." },
       { id: "wu-g-bandwalk", name: "Lateral Band Walk", dose: "10 steps/way", note: "Mini band above ankles, quarter-squat. Lead with heel, toes forward. Control trail leg. Stay low." },
+    ],
+    // Pre-run, live GPS runs only. Standing, no equipment — after the lift-day
+    // warm-up or on its own. Not routed through warmupItemsFor: nothing here
+    // should dedupe against the daily reset.
+    run: [
+      { id: "wu-r-calf", name: "Curb Calf Raises", dose: "15 double + 8/side single", note: "Heel off a curb. Full stretch at the bottom, slow eccentric. Plantar-fascia loading, not just a warm-up." },
+      { id: "wu-r-kickback", name: "Standing Glute Kickbacks", dose: "12/side · L first", note: "Hand on a pole. Kick straight back, 1s squeeze. Glute drives it — no lumbar arch." },
+      { id: "wu-r-abduction", name: "Standing Hip Abduction", dose: "12/side · L first", note: "Same pole. Leg out to the side, toes forward, torso still." },
+      { id: "wu-r-swings", name: "Leg Swings", dose: "10 F/B + 10 side/side per leg", note: "Hand on a pole. Controlled range, no bounce." },
+      { id: "wu-r-strides", name: "Easy Jog + Strides", dose: "2 min jog · 3×15s", note: "2 min shuffle pace, then 3 strides: build over 5s to ~80%, hold 5–8s, ease off. Walk 30–45s between. Then real pace." },
     ],
     // The old checkbox core moved to config.core as real logged exercises
     // (v5). Side plank and SL glute bridge are back as L-first warm-ups on
@@ -232,6 +243,14 @@ function coreItemsFor(mobility, dayType, mode) {
     seen.add(key);
     return true;
   });
+}
+// Pre-run checklist snapshot, same shape as a lift session's `warmup` so
+// History and the session viewer render it unchanged. Null when there's no
+// list (older config) or no checklist was shown (manual entry).
+export function runWarmupSnapshot(mobility, warmupDone) {
+  const items = mobility && Array.isArray(mobility.run) ? mobility.run : [];
+  if (!warmupDone || items.length === 0) return null;
+  return items.map((it) => ({ id: it.id, name: it.name, done: !!warmupDone[it.id] }));
 }
 // "2×10/side" → 2 rounds, "3×30–40yd/side" → 3. No leading count = one yes/no round —
 // which is also how anything hard to count (carries, holds) gets credit: a round done is a round done.
@@ -1814,20 +1833,22 @@ export default function App() {
   /* --- running --- */
   // Runs are ordinary sessions (dayType "run") so history, sync, and backup
   // all just work; only the summary is stored — never the GPS trail.
-  const saveRun = useCallback(async ({ startIso, endIso, miles, seconds, splits, source }) => {
+  const saveRun = useCallback(async ({ startIso, endIso, miles, seconds, splits, source, warmupDone }) => {
     const startDate = new Date(startIso);
     let id = makeSessionId(startDate);
     for (let bump = 2; index.some((e) => e.id === id); bump += 1) id = `${makeSessionId(startDate)}-${bump}`;
+    const warmup = runWarmupSnapshot(config && config.mobility, warmupDone);
     const session = {
       id, date: startIso, endDate: endIso, dayType: "run", mode: "run", exercises: [],
       qlCheck: null, // runs load the QL too — next-day check applies
       run: { miles, seconds, splits: splits && splits.length ? splits : undefined, source },
+      warmup: warmup || undefined,
     };
     const ok = await store.set(`session:${id}`, session);
     if (!ok) {
       pushToast("Couldn't save the run", {
         tone: "error",
-        action: { label: "Retry", fn: () => saveRun({ startIso, endIso, miles, seconds, splits, source }) },
+        action: { label: "Retry", fn: () => saveRun({ startIso, endIso, miles, seconds, splits, source, warmupDone }) },
       });
       return;
     }
@@ -1845,7 +1866,7 @@ export default function App() {
     });
     setRunOverlay(null);
     pushToast(`Run saved — ${fmtW(miles)} mi in ${fmtDur(seconds)}`, { tone: "success" });
-  }, [index, persist, pushToast]);
+  }, [config, index, persist, pushToast]);
 
   /* --- scheduled deload week --- */
   const startDeloadWeek = useCallback(() => {
@@ -2021,7 +2042,7 @@ export default function App() {
       )}
 
       {runOverlay && (
-        <RunOverlay mode={runOverlay} onSave={saveRun} onClose={() => setRunOverlay(null)} pushToast={pushToast} />
+        <RunOverlay mode={runOverlay} mobility={config && config.mobility} onSave={saveRun} onClose={() => setRunOverlay(null)} pushToast={pushToast} />
       )}
 
       <TabBar tab={tab} setTab={setTab} hasDraft={!!draft} />
@@ -2695,6 +2716,33 @@ function LoggingScreen({ draft, index, mutateDraft, onFinish, onDiscard, onAccep
 
 // Controlled: `done` is a {itemId: true} map owned by the workout draft, so
 // checks survive reloads and get saved onto the session at Finish.
+// One checkbox row of a warm-up list — shared by the lift-day sheet and the pre-run card.
+function WarmupRow({ item, checked, onToggle }) {
+  return (
+    <button onClick={onToggle} className="flex items-start gap-3 px-4 py-3 text-left">
+      <span
+        className={`mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border ${TRANS} ${
+          checked ? "border-lime-400 bg-lime-400 text-black" : "border-zinc-600"
+        }`}
+      >
+        {checked ? <Check size={14} /> : null}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className={`block text-sm font-semibold ${checked ? "text-zinc-500 line-through" : "text-zinc-100"}`}>
+          {item.name}
+          {item.badge ? (
+            <span className="ml-2 inline-block rounded-full border border-amber-400/60 px-2 text-xs font-bold uppercase tracking-wide text-amber-300">
+              {item.badge}
+            </span>
+          ) : null}
+        </span>
+        {item.note ? <span className="mt-1 block text-xs leading-relaxed text-zinc-500">{item.note}</span> : null}
+      </span>
+      <span className="shrink-0 pl-1 text-right text-xs font-semibold tabular-nums text-zinc-400">{item.dose}</span>
+    </button>
+  );
+}
+
 function MobilityScreen({ title, subtitle, sections, doneLabel, done, onToggle, onClose }) {
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black">
@@ -2722,32 +2770,9 @@ function MobilityScreen({ title, subtitle, sections, doneLabel, done, onToggle, 
                 {sec.items.length === 0 && (
                   <div className="px-4 py-4 text-sm text-zinc-600">Nothing here yet.</div>
                 )}
-                {sec.items.map((it) => {
-                  const checked = !!done[it.id];
-                  return (
-                    <button key={it.id} onClick={() => onToggle(it.id)} className="flex items-start gap-3 px-4 py-3 text-left">
-                      <span
-                        className={`mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border ${TRANS} ${
-                          checked ? "border-lime-400 bg-lime-400 text-black" : "border-zinc-600"
-                        }`}
-                      >
-                        {checked ? <Check size={14} /> : null}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className={`block text-sm font-semibold ${checked ? "text-zinc-500 line-through" : "text-zinc-100"}`}>
-                          {it.name}
-                          {it.badge ? (
-                            <span className="ml-2 inline-block rounded-full border border-amber-400/60 px-2 text-xs font-bold uppercase tracking-wide text-amber-300">
-                              {it.badge}
-                            </span>
-                          ) : null}
-                        </span>
-                        {it.note ? <span className="mt-1 block text-xs leading-relaxed text-zinc-500">{it.note}</span> : null}
-                      </span>
-                      <span className="shrink-0 pl-1 text-right text-xs font-semibold tabular-nums text-zinc-400">{it.dose}</span>
-                    </button>
-                  );
-                })}
+                {sec.items.map((it) => (
+                  <WarmupRow key={it.id} item={it} checked={!!done[it.id]} onToggle={() => onToggle(it.id)} />
+                ))}
               </div>
               {sec.foot ? <div className="px-1 pt-2 text-xs text-zinc-600">{sec.foot}</div> : null}
             </section>
@@ -3911,8 +3936,15 @@ export function haversineMeters(a, b) {
    movement still accumulates correctly. Implausible jumps (>12 m/s) re-anchor
    without credit. Timing is wall-clock, so it survives brief backgrounding —
    distance across a gap is bridged as the straight line between fixes. */
-function RunOverlay({ mode, onSave, onClose, pushToast }) {
+function RunOverlay({ mode, mobility, onSave, onClose, pushToast }) {
   const [entryMode, setEntryMode] = useState(mode); // "live" | "manual" — denied GPS can fall back
+  // Pre-run checklist (live runs only). Overlay-local on purpose: a run in
+  // progress doesn't survive a reload either.
+  const runWarmup = (mobility && mobility.run) || [];
+  const [warmupDone, setWarmupDone] = useState({});
+  const [warmupOpen, setWarmupOpen] = useState(true);
+  const toggleWarmup = (id) => setWarmupDone((d) => ({ ...d, [id]: !d[id] }));
+  const warmupDoneCount = runWarmup.filter((it) => warmupDone[it.id]).length;
   const todayStr = dateInputVal(new Date());
   const [dayStr, setDayStr] = useState(todayStr);
   const [manMiles, setManMiles] = useState(3);
@@ -4029,6 +4061,7 @@ function RunOverlay({ mode, onSave, onClose, pushToast }) {
         seconds: Math.round(t.current.accumMs / 1000),
         splits: t.current.splits,
         source: "gps",
+        warmupDone,
       });
     } finally { setSaving(false); }
   };
@@ -4091,6 +4124,32 @@ function RunOverlay({ mode, onSave, onClose, pushToast }) {
                     Your location never leaves the phone; only distance, time, and mile splits are saved.
                   </div>
                 </div>
+                {runWarmup.length > 0 && (
+                  <section className="rounded-2xl border border-zinc-800 bg-zinc-900">
+                    <button
+                      onClick={() => setWarmupOpen((o) => !o)}
+                      className="flex w-full items-center gap-3 px-4 py-3 text-left"
+                      aria-expanded={warmupOpen}
+                    >
+                      <Flame size={18} className="shrink-0 text-lime-400" />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-semibold text-zinc-100">Pre-run warm-up</div>
+                        <div className="text-xs text-zinc-500">Standing, no equipment · check them off as you go</div>
+                      </div>
+                      <span className={`shrink-0 text-xs font-semibold tabular-nums ${warmupDoneCount >= runWarmup.length ? "text-lime-400" : "text-zinc-500"}`}>
+                        {warmupDoneCount}/{runWarmup.length}
+                      </span>
+                      <ChevronRight size={16} className={`shrink-0 text-zinc-600 ${TRANS} ${warmupOpen ? "rotate-90" : ""}`} />
+                    </button>
+                    {warmupOpen && (
+                      <div className="flex flex-col divide-y divide-zinc-800 border-t border-zinc-800">
+                        {runWarmup.map((it) => (
+                          <WarmupRow key={it.id} item={it} checked={!!warmupDone[it.id]} onToggle={() => toggleWarmup(it.id)} />
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                )}
                 <button onClick={start} className={`h-14 w-full rounded-2xl bg-lime-400 text-base font-bold text-black active:bg-lime-300 ${TRANS}`}>
                   Start run
                 </button>

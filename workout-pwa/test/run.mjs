@@ -702,6 +702,26 @@ section("weightStall");
   });
 }
 
+section("runWarmupSnapshot");
+{
+  const m = T.SEED_CONFIG.mobility;
+  test("live run: five entries in the lift-session warmup shape, done flags from the checklist", () => {
+    const snap = T.runWarmupSnapshot(m, { "wu-r-calf": true, "wu-r-strides": true });
+    assert.equal(snap.length, 5);
+    assert.deepEqual(snap[0], { id: "wu-r-calf", name: "Curb Calf Raises", done: true });
+    assert.deepEqual(snap.map((w) => w.done), [true, false, false, false, true]);
+    assert.ok(snap.every((w) => typeof w.name === "string" && !("dose" in w)));
+  });
+  test("manual entry (no checklist shown) or a config without a run list -> null, not an all-false list", () => {
+    assert.equal(T.runWarmupSnapshot(m, undefined), null);
+    assert.equal(T.runWarmupSnapshot({ v: 7, general: [] }, {}), null);
+    assert.equal(T.runWarmupSnapshot(null, {}), null);
+  });
+  test("nothing checked but the checklist was shown -> five unticked rows (0/5 in history)", () => {
+    assert.deepEqual(T.runWarmupSnapshot(m, {}).map((w) => w.done), [false, false, false, false, false]);
+  });
+}
+
 /* ================= Task 7: scheduled deload week ================= */
 
 section("deloadDue + inDeloadWeek");
@@ -785,9 +805,11 @@ section("core ladder");
     assert.ok(T.SEED_CONFIG.mobility.v >= 5);
     assert.deepEqual(T.SEED_CONFIG.mobility.core, { push: [], pull: [], legs: [] });
   });
-  test("mobility v7: push/pull warm-ups trimmed, v6 glute activation kept", () => {
+  test("mobility v8: pre-run list added; v7 lift lists untouched", () => {
     const m = T.SEED_CONFIG.mobility;
-    assert.equal(m.v, 7);
+    assert.equal(m.v, 8);
+    assert.deepEqual(m.run.map((it) => it.id), ["wu-r-calf", "wu-r-kickback", "wu-r-abduction", "wu-r-swings", "wu-r-strides"]);
+    assert.ok(m.run.every((it) => !it.gymOnly));
     const ids = (list) => list.map((it) => it.id);
     assert.deepEqual(ids(m.general), ["dr-9090", "dr-psoas", "dr-clam", "dr-fig4", "dr-hamstring", "dr-twist", "dr-butterfly"]);
     assert.deepEqual(ids(m.push), ["wu-p-breath", "wu-p-pec", "wu-p-tspine", "wu-p-needle", "wu-p-extrot", "wu-p-pushup"]);
