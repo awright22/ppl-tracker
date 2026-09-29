@@ -1,6 +1,6 @@
-// PPL Tracker service worker — app shell cache (build 8ef1c84c29)
-const CACHE = "ppl-8ef1c84c29";
-const ASSETS = ["./", "./index.html", "./app-8ef1c84c29.js", "./tw-a60c785630.js", "./manifest.webmanifest", "./icon-180.png", "./icon-192.png", "./icon-512.png"];
+// PPL Tracker service worker — app shell cache (build e9ef0a05ab)
+const CACHE = "ppl-e9ef0a05ab";
+const ASSETS = ["./", "./index.html", "./app-e9ef0a05ab.js", "./tw-a60c785630.js", "./manifest.webmanifest", "./icon-180.png", "./icon-192.png", "./icon-512.png"];
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
 });

@@ -697,30 +697,31 @@ section("weightTrend + weightStall");
     assert.equal(T.weightTrend(data, now).perWeek, 0);
   });
 
-  test("flat weight for five weeks = stalled", () => {
-    const st = T.weightStall(series(() => 200, 35), now);
-    assert.deepEqual(st.trends, [0, 0, 0]);
+  test("flat weight for four weeks = stalled", () => {
+    const st = T.weightStall(series(() => 200, 28), now);
+    assert.deepEqual(st.trends, [0, 0]);
     assert.equal(st.stalled, true);
   });
   test("gaining also reads as stalled (trend > -0.3)", () => {
-    const st = T.weightStall(series(losing(-0.05), 35), now);
+    const st = T.weightStall(series(losing(-0.05), 28), now);
     assert.equal(st.latest, 0.35);
     assert.equal(st.stalled, true);
   });
   test("steady loss is not a stall", () => {
-    const st = T.weightStall(series(losing(0.5 / 7), 35), now);
+    const st = T.weightStall(series(losing(0.5 / 7), 28), now);
     assert.equal(st.latest, -0.5);
     assert.equal(st.stalled, false);
   });
   test("-0.3 lb/wk exactly breaks the stall chain; -0.28 does not", () => {
-    assert.equal(T.weightStall(series(losing(0.3 / 7), 35), now).stalled, false);
-    assert.equal(T.weightStall(series(losing(0.28 / 7), 35), now).stalled, true);
+    assert.equal(T.weightStall(series(losing(0.3 / 7), 28), now).stalled, false);
+    assert.equal(T.weightStall(series(losing(0.28 / 7), 28), now).stalled, true);
   });
   test("a check without enough data breaks the chain (no phantom stalls)", () => {
-    // Only the last 21 days logged: the checks 7 and 14 days back see < two weeks.
-    const st = T.weightStall(series(() => 200, 21), now);
+    // Only the last 20 days logged: today's check has enough, the one 7 days
+    // back sees 13 days — under the two-full-weeks floor.
+    const st = T.weightStall(series(() => 200, 20), now);
     assert.equal(st.latest, 0);
-    assert.equal(st.trends[2], null);
+    assert.equal(st.trends[1], null);
     assert.equal(st.stalled, false);
   });
 }

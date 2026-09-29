@@ -4268,12 +4268,14 @@ export function weightTrend(weights, end = new Date()) {
   return { perWeek: round2((sxy / sxx) * 7), n, days: TREND_DAYS };
 }
 
-/* Weight stall detector (exported for tests). The 21-day trend checked today,
-   7 days ago and 14 days ago; stall = all three slower than −0.3 lb/wk
-   (losing almost nothing, or gaining). A check without enough data is null
-   and conservatively breaks the chain. */
+/* Weight stall detector (exported for tests). The 21-day trend checked today
+   and 7 days ago; stall = both slower than −0.3 lb/wk (losing almost nothing,
+   or gaining). Two overlapping checks means roughly four flat weeks before
+   the banner fires — one check alone false-alarms too often at this noise
+   level, three waits ~5 weeks. A check without enough data is null and
+   conservatively breaks the chain. */
 export function weightStall(weights, now = new Date()) {
-  const fits = [0, 1, 2].map((k) => weightTrend(weights, new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7 * k)));
+  const fits = [0, 1].map((k) => weightTrend(weights, new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7 * k)));
   const trends = fits.map((t) => (t ? t.perWeek : null)); // newest first
   const stalled = trends.every((t) => t != null && t > -0.3);
   return { trends, stalled, latest: trends[0], n: fits[0] ? fits[0].n : 0 };
