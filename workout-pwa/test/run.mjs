@@ -907,14 +907,29 @@ section("Apple Health payloads");
     assert.equal(e.startDate, "10/3/2026 12:30 AM");
     assert.equal(e.minutes, 45);
   });
-  test("bodyKgAt: nearest weigh-in in time, lb -> kg; 80 kg when none", () => {
-    const weights = [
-      { id: "w2", date: at(8, 0), weight: 200 },
-      { id: "w1", date: new Date(2026, 5, 1, 8, 0).toISOString(), weight: 180 },
-    ];
-    assert.ok(Math.abs(T.bodyKgAt(weights, at(12, 0)) - 90.718) < 0.01);
-    assert.ok(Math.abs(T.bodyKgAt(weights, new Date(2026, 5, 3).toISOString()) - 81.647) < 0.01);
-    assert.equal(T.bodyKgAt([], at(12, 0)), 80);
+  test("bodyKgAt: straight line between weigh-ins, flat outside them; 80 kg when none", () => {
+    const d = (m, day) => new Date(2026, m, day, 8, 0).toISOString();
+    const weights = [{ id: "w2", date: d(5, 21), weight: 200 }, { id: "w1", date: d(5, 1), weight: 180 }];
+    const lb = (iso) => T.bodyKgAt(weights, iso) / 0.45359237;
+    assert.ok(Math.abs(lb(d(5, 11)) - 190) < 0.01); // halfway
+    assert.ok(Math.abs(lb(d(5, 6)) - 185) < 0.01);
+    assert.ok(Math.abs(lb(d(4, 1)) - 180) < 0.01); // before the first
+    assert.ok(Math.abs(lb(d(8, 1)) - 200) < 0.01); // after the last
+    assert.equal(T.bodyKgAt([], d(5, 1)), 80);
+  });
+  test("withStartWeight: anchors the earliest workout until a weigh-in covers it", () => {
+    const d = (m, day) => new Date(2026, m, day, 8, 0).toISOString();
+    const index = [{ id: "b", date: d(5, 21), mode: "gym" }, { id: "a", date: d(5, 1), mode: "gym" }, { id: "e", date: d(3, 1), mode: "event" }];
+    const weights = [{ id: "w", date: d(5, 21), weight: 205 }];
+    const out = T.withStartWeight(weights, index, 215);
+    assert.equal(out.length, 2);
+    assert.ok(Math.abs(T.bodyKgAt(out, d(5, 1)) / 0.45359237 - 215) < 0.01);
+    assert.ok(Math.abs(T.bodyKgAt(out, d(5, 11)) / 0.45359237 - 210) < 0.01);
+    // off when unset, when there are no workouts, or when a weigh-in is already that old
+    assert.equal(T.withStartWeight(weights, index, 0), weights);
+    assert.deepEqual(T.withStartWeight(weights, [], 215), weights);
+    const early = [{ id: "w0", date: d(4, 1), weight: 220 }];
+    assert.equal(T.withStartWeight(early, index, 215), early);
   });
   test("healthEntry calories: body weight x duration, warm-up at the lower rate", () => {
     const weights = [{ id: "w", date: at(8, 0), weight: 176.37 }]; // 80.0 kg
