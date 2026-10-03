@@ -890,6 +890,38 @@ section("core ladder");
   });
 }
 
+section("Apple Health payloads");
+{
+  const at = (h, m) => new Date(2026, 9, 3, h, m).toISOString(); // local time, any TZ
+  const lift = (id, start, end, extra = {}) => ({
+    id, date: start, endDate: end, dayType: "push", mode: "gym",
+    exercises: [{ sets: [{ reps: 5, weight: 100 }] }], ...extra,
+  });
+  test("healthEntry: plain-space local startDate, real duration, calories", () => {
+    const e = T.healthEntry(lift("a", at(12, 5), at(13, 0)));
+    assert.deepEqual(e, { startDate: "10/3/2026 12:05 PM", minutes: 55, calories: 275 });
+  });
+  test("healthEntry: midnight hour reads 12 AM; missing end defaults to 45 min", () => {
+    const e = T.healthEntry({ date: at(0, 30), exercises: [] });
+    assert.equal(e.startDate, "10/3/2026 12:30 AM");
+    assert.equal(e.minutes, 45);
+  });
+  test("buildHealthBackfill: lifts only, oldest first, empty sessions dropped", () => {
+    const { count, payload } = T.buildHealthBackfill([
+      lift("late", at(18, 0), at(19, 0)),
+      lift("early", at(7, 0), at(7, 40)),
+      lift("run", at(8, 0), at(8, 30), { mode: "run", run: { miles: 3 } }),
+      lift("event", at(9, 0), at(9, 0), { mode: "event" }),
+      lift("empty", at(10, 0), at(10, 5), { exercises: [{ sets: [] }] }),
+      null,
+    ]);
+    const { workouts } = JSON.parse(payload);
+    assert.equal(count, 2);
+    assert.deepEqual(workouts.map((w) => w.startDate), ["10/3/2026 7:00 AM", "10/3/2026 6:00 PM"]);
+    assert.equal(workouts[0].minutes, 40);
+  });
+}
+
 /* ================= summary ================= */
 
 console.log(`\n${passed} passed, ${failed} failed`);
