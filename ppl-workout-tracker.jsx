@@ -901,7 +901,8 @@ function countSets(exercises) {
 // Artifacts can't call HealthKit, so we hand a JSON payload to a user-made
 // "Log Lift" shortcut whose Log Workout action writes the session to Health.
 
-export function buildHealthPayload(session) {
+// The fields one Log Workout action needs: Date = startDate, Duration = minutes, Calories = calories.
+export function healthEntry(session) {
   const start = new Date(session.date);
   const end = session.endDate ? new Date(session.endDate) : new Date(start.getTime() + 45 * 60000);
   let minutes = Math.round((end.getTime() - start.getTime()) / 60000);
@@ -914,13 +915,14 @@ export function buildHealthPayload(session) {
     const m = String(d.getMinutes()).padStart(2, "0");
     return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()} ${h}:${m} ${d.getHours() < 12 ? "AM" : "PM"}`;
   };
+  return { startDate: local(start), minutes, calories: Math.round(minutes * 5) }; // rough strength-training estimate
+}
+
+export function buildHealthPayload(session) {
   const sets = countSets(session.exercises || []);
-  // Keys match the Log Workout action's fields: Date = startDate, Duration = minutes, Calories = calories.
   return JSON.stringify(
     {
-      startDate: local(start),
-      minutes,
-      calories: Math.round(minutes * 5), // rough strength-training estimate for the Health log
+      ...healthEntry(session),
       workoutType: session.mode === "calisthenics" ? "Functional Strength Training" : "Traditional Strength Training",
       sets,
       summary: `${DAY_LABEL[session.dayType] || session.dayType} day — ${sets} sets · ${headlineFor(session.exercises || [])}`,
@@ -928,6 +930,26 @@ export function buildHealthPayload(session) {
     null,
     2
   );
+}
+
+// Every lifting session, oldest first, for a one-time catch-up run. Runs and
+// logged events stay out, as do sessions with no sets logged.
+export function buildHealthBackfill(sessions) {
+  const workouts = sessions
+    .filter((s) => s && !s.run && s.mode !== "event" && s.mode !== "run" && countSets(s.exercises || []) > 0)
+    .sort((a, b) => new Date(a.date) - new Date(b.date))
+    .map(healthEntry);
+  return { count: workouts.length, payload: JSON.stringify({ workouts }) };
+}
+
+function runShortcut(name) {
+  try {
+    // location, not window.open: after the clipboard await the tap's user
+    // activation is gone, so iOS blocks a popup but still hands off a URL scheme.
+    if (/iPhone|iPad|iPod/.test((typeof navigator !== "undefined" && navigator.userAgent) || "")) {
+      window.location.href = `shortcuts://run-shortcut?name=${encodeURIComponent(name)}`;
+    }
+  } catch (e) { /* blocked scheme — clipboard path still works */ }
 }
 
 async function copyToClipboard(text) {
@@ -959,14 +981,7 @@ function HealthLogButton({ session, pushToast }) {
     const ok = await copyToClipboard(payload);
     if (ok) {
       pushToast("Copied — run your “Log Lift” shortcut to add it to Health", { tone: "success", ttl: 6000 });
-      try {
-        // On iOS, try to launch the shortcut directly with the clipboard as input.
-        if (/iPhone|iPad|iPod/.test((typeof navigator !== "undefined" && navigator.userAgent) || "")) {
-          // location, not window.open: after the clipboard await the tap's user
-          // activation is gone, so iOS blocks a popup but still hands off a URL scheme.
-          window.location.href = "shortcuts://run-shortcut?name=Log%20Lift";
-        }
-      } catch (e) { /* blocked scheme — clipboard path still works */ }
+      runShortcut("Log Lift");
     } else {
       setShowRaw(true);
       pushToast("Couldn't reach the clipboard — copy the text below instead", { tone: "error" });
@@ -985,6 +1000,61 @@ function HealthLogButton({ session, pushToast }) {
           readOnly
           rows={5}
           value={buildHealthPayload(session)}
+          onFocus={(e) => e.target.select()}
+          className="w-full rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-400 outline-none"
+        />
+      )}
+    </div>
+  );
+}
+
+// Two taps on purpose: loading every session is async, and iOS only allows a
+// clipboard write inside the tap itself — so the second tap copies a payload
+// that's already built.
+function HealthBackfill({ index, loadSession, pushToast }) {
+  const [prepared, setPrepared] = useState(null); // { count, payload }
+  const [loading, setLoading] = useState(false);
+  const [showRaw, setShowRaw] = useState(false);
+  const prepare = async () => {
+    setLoading(true);
+    try {
+      const lifts = index.filter((e) => e.mode !== "run" && e.mode !== "event");
+      const sessions = await Promise.all(lifts.map((e) => loadSession(e.id)));
+      setPrepared(buildHealthBackfill(sessions));
+    } finally {
+      setLoading(false);
+    }
+  };
+  const send = async () => {
+    const ok = await copyToClipboard(prepared.payload);
+    if (ok) {
+      pushToast(`Copied ${prepared.count} workouts — run “Backfill Lifts”`, { tone: "success", ttl: 6000 });
+      runShortcut("Backfill Lifts");
+    } else {
+      setShowRaw(true);
+      pushToast("Couldn't reach the clipboard — copy the text below instead", { tone: "error" });
+    }
+  };
+  const btn = `flex h-11 items-center justify-center gap-2 rounded-xl border border-zinc-700 px-4 text-sm font-semibold text-zinc-200 active:bg-zinc-800 ${TRANS}`;
+  return (
+    <div className="flex flex-col gap-2">
+      {!prepared ? (
+        <button onClick={prepare} disabled={loading} className={btn}>
+          {loading ? <Loader2 size={16} className="animate-spin" /> : <Heart size={16} className="text-lime-400" />}
+          Prepare backfill
+        </button>
+      ) : prepared.count === 0 ? (
+        <div className="text-xs text-zinc-500">No lifting sessions to send.</div>
+      ) : (
+        <button onClick={send} className={btn}>
+          <Heart size={16} className="text-lime-400" /> Send all {prepared.count} lifts to Health
+        </button>
+      )}
+      {showRaw && prepared && (
+        <textarea
+          readOnly
+          rows={5}
+          value={prepared.payload}
           onFocus={(e) => e.target.select()}
           className="w-full rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-400 outline-none"
         />
@@ -2024,7 +2094,7 @@ export default function App() {
           <WeightScreen config={config} weights={weights} onLog={logWeight} onDelete={deleteWeight} />
         )}
         {tab === "settings" && (
-          <SettingsScreen config={config} saveConfig={saveConfig} themeKey={themeKey} index={index} onStartDeload={startDeloadWeek} />
+          <SettingsScreen config={config} saveConfig={saveConfig} themeKey={themeKey} index={index} onStartDeload={startDeloadWeek} loadSession={loadSession} pushToast={pushToast} />
         )}
       </div>
 
@@ -4535,7 +4605,7 @@ function WeightScreen({ config, weights, onLog, onDelete }) {
 
 /* ---------- settings ---------- */
 
-function SettingsScreen({ config, saveConfig, themeKey, index, onStartDeload }) {
+function SettingsScreen({ config, saveConfig, themeKey, index, onStartDeload, loadSession, pushToast }) {
   const [mode, setMode] = useState("gym");
   const [day, setDay] = useState("push");
   const [editingId, setEditingId] = useState(null);
@@ -4718,6 +4788,20 @@ function SettingsScreen({ config, saveConfig, themeKey, index, onStartDeload }) 
         <div className="text-xs text-zinc-600">
           Artifacts can't talk to HealthKit directly, so the shortcut is the bridge. Logged workouts count toward your Exercise ring. Sets and reps stay here — Health only stores the session.
         </div>
+      </div>
+
+      <div className="flex flex-col gap-2 rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+        <div className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
+          <Heart size={16} className="text-lime-400" /> Backfill past lifts to Health
+        </div>
+        <ol className="flex list-decimal flex-col gap-1 pl-4 text-xs text-zinc-500">
+          <li>Duplicate Log Lift and name the copy <span className="font-semibold text-zinc-300">Backfill Lifts</span>.</li>
+          <li>After Get Dictionary, add <span className="font-semibold text-zinc-300">Get Dictionary Value</span> for key <span className="font-semibold text-zinc-300">workouts</span>.</li>
+          <li>Add <span className="font-semibold text-zinc-300">Repeat with Each</span> on that value, and drag Log Workout inside the loop.</li>
+          <li>In Log Workout, re-point Date, Duration and Calories to <span className="font-semibold text-zinc-300">Repeat Item</span>, with keys <span className="font-semibold text-zinc-300">startDate</span>, <span className="font-semibold text-zinc-300">minutes</span>, <span className="font-semibold text-zinc-300">calories</span>.</li>
+          <li>Tap Prepare, then Send. Run it once — sending again logs every workout twice.</li>
+        </ol>
+        <HealthBackfill index={index} loadSession={loadSession} pushToast={pushToast} />
       </div>
 
       <div className="mt-4 flex flex-col gap-2 border-t border-zinc-800 pt-4">
