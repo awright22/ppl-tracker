@@ -898,8 +898,8 @@ section("Apple Health payloads");
     exercises: [{ sets: [{ reps: 5, weight: 100 }] }], ...extra,
   });
   test("healthEntry: plain-space local startDate, real duration, calories", () => {
-    const e = T.healthEntry(lift("a", at(12, 5), at(13, 0)));
-    assert.deepEqual(e, { startDate: "10/3/2026 12:05 PM", minutes: 55, calories: 275 });
+    const e = T.healthEntry(lift("a", at(12, 5), at(13, 0)), new Date(at(15, 5)));
+    assert.deepEqual(e, { startDate: "10/3/2026 12:05 PM", minutesAgo: 180, minutes: 55, calories: 275 });
   });
   test("healthEntry: midnight hour reads 12 AM; missing end defaults to 45 min", () => {
     const e = T.healthEntry({ date: at(0, 30), exercises: [] });
