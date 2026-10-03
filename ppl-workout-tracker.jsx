@@ -943,15 +943,45 @@ export function withStartWeight(weights, index, startLb) {
   return covered ? weights : [...(weights || []), { id: "health-start", date: new Date(first).toISOString(), weight: lb }];
 }
 
+// Sessions imported from the pre-app log carry a made-up 75-minute length
+// (12:00–1:15 for every one), so their duration says nothing about the work
+// done. Spot them by the import tag, or by that exact to-the-millisecond shape.
+export function hasPlaceholderDuration(session) {
+  if (!session) return false;
+  if (session.imported) return true;
+  const a = new Date(session.date).getTime();
+  const b = new Date(session.endDate).getTime();
+  return b - a === 75 * 60000 && a % 60000 === 0;
+}
+
+// Typical minutes per logged set, from sessions the app actually timed —
+// the median, so one session left open for hours can't skew it.
+const DEFAULT_MIN_PER_SET = 4.3; // until there are enough timed sessions to measure
+export function minutesPerSet(sessions) {
+  const paces = [];
+  for (const s of sessions || []) {
+    if (!s || s.run || s.mode === "event" || s.mode === "run" || hasPlaceholderDuration(s) || !s.endDate) continue;
+    const sets = countSets(s.exercises || []);
+    const min = (new Date(s.endDate).getTime() - new Date(s.date).getTime()) / 60000;
+    if (sets > 0 && min >= 10 && min <= 240) paces.push(min / sets);
+  }
+  if (paces.length < 3) return DEFAULT_MIN_PER_SET;
+  paces.sort((a, b) => a - b);
+  const mid = paces.length >> 1;
+  return paces.length % 2 ? paces[mid] : (paces[mid - 1] + paces[mid]) / 2;
+}
+
 // The fields one Log Workout action needs. minutes stays the full session
 // (that's what Health shows as the workout's length); only the calories
 // treat the pre-first-set warm-up at the lower rate. Sessions saved before
 // liftStart existed have no split and count entirely at the lifting rate.
-export function healthEntry(session, { now = new Date(), weights } = {}) {
+export function healthEntry(session, { now = new Date(), weights, minPerSet = DEFAULT_MIN_PER_SET } = {}) {
   const start = new Date(session.date);
   const end = session.endDate ? new Date(session.endDate) : new Date(start.getTime() + 45 * 60000);
   let minutes = Math.round((end.getTime() - start.getTime()) / 60000);
   if (!Number.isFinite(minutes) || minutes < 1) minutes = 45;
+  // Placeholder length -> estimate from the sets actually logged instead.
+  if (hasPlaceholderDuration(session)) minutes = Math.max(5, Math.round(countSets(session.exercises || []) * minPerSet));
   if (minutes > 240) minutes = 240;
   // Built by hand: toLocaleTimeString emits a narrow no-break space before
   // AM/PM on current iOS, which Shortcuts' date parsing can choke on.
@@ -989,10 +1019,11 @@ export function buildHealthPayload(session, weights) {
 // Every lifting session, oldest first, for a one-time catch-up run. Runs and
 // logged events stay out, as do sessions with no sets logged.
 export function buildHealthBackfill(sessions, weights) {
+  const minPerSet = minutesPerSet(sessions);
   const workouts = sessions
     .filter((s) => s && !s.run && s.mode !== "event" && s.mode !== "run" && countSets(s.exercises || []) > 0)
     .sort((a, b) => new Date(a.date) - new Date(b.date))
-    .map((s) => healthEntry(s, { weights }));
+    .map((s) => healthEntry(s, { weights, minPerSet }));
   return { count: workouts.length, payload: JSON.stringify({ workouts }) };
 }
 

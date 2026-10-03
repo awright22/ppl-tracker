@@ -942,6 +942,31 @@ section("Apple Health payloads");
     // a liftStart outside the session is ignored / clamped, never negative
     assert.equal(T.healthEntry(lift("c", at(12, 22), at(13, 39), { liftStart: at(11, 0) }), { weights }).calories, 257);
   });
+  test("imported sessions: placeholder 75 min replaced by sets x measured pace", () => {
+    const sets = (n) => [{ sets: Array.from({ length: n }, () => ({ reps: 8, weight: 50 })) }];
+    const imp = (id, n, extra = {}) => ({
+      id, date: "2026-01-21T17:00:00.000Z", endDate: "2026-01-21T18:15:00.000Z",
+      dayType: "legs", mode: "gym", exercises: sets(n), ...extra,
+    });
+    const timed = (id, min, n) => ({
+      id, date: "2026-09-01T16:03:36.215Z", endDate: new Date(Date.parse("2026-09-01T16:03:36.215Z") + min * 60000).toISOString(),
+      dayType: "push", mode: "gym", exercises: sets(n),
+    });
+    assert.equal(T.hasPlaceholderDuration(imp("a", 6)), true); // by shape, no tag
+    assert.equal(T.hasPlaceholderDuration(timed("t", 75, 18)), false); // real 75 min, ms-level stamps
+    assert.equal(T.hasPlaceholderDuration({ ...timed("t", 40, 9), imported: "x" }), true);
+    // paces 4, 5, 6 min/set (+ a 300-min outlier and the imports, both ignored) -> median 5
+    const all = [timed("t1", 72, 18), timed("t2", 90, 18), timed("t3", 108, 18), timed("t4", 300, 18), imp("i1", 6), imp("i2", 18)];
+    assert.equal(T.minutesPerSet(all), 5);
+    assert.equal(T.minutesPerSet(all.slice(0, 2)), 4.3); // too few timed sessions -> default
+    const weights = [{ id: "w", date: "2026-01-21T12:00:00.000Z", weight: 176.37 }]; // 80 kg
+    const e = T.healthEntry(imp("i1", 6), { weights, minPerSet: 5 });
+    assert.equal(e.minutes, 30);
+    assert.equal(e.calories, 100); // 2.5 x 80 x 0.5 h
+    const { payload } = T.buildHealthBackfill(all, weights);
+    const mins = JSON.parse(payload).workouts.map((w) => w.minutes);
+    assert.deepEqual(mins, [30, 90, 72, 90, 108, 240]); // imports first (Jan), then timed; 300 capped
+  });
   test("buildHealthBackfill: lifts only, oldest first, empty sessions dropped", () => {
     const { count, payload } = T.buildHealthBackfill([
       lift("late", at(18, 0), at(19, 0)),
