@@ -63,5 +63,3 @@ Tap it anytime for **Sync now**, **Export backup**, and **Import**.
   you deploy it, do one test workout in Safari and check the sheet's tabs fill in
   before trusting it. If sync errors mention HTML or login, re-check step 4's
   "Anyone" setting.
-- The Apple Health flow (Copy for Apple Health + the "Log Lift" shortcut) works the
-  same in the PWA as in the artifact.

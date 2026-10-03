@@ -6,7 +6,7 @@ import {
   Dumbbell, History as HistoryIcon, TrendingUp, Settings as SettingsIcon,
   Plus, Minus, X, Check, ChevronLeft, ChevronDown, ChevronUp, MoreVertical,
   Trash2, Pencil, Ban, RotateCcw, AlertTriangle, Loader2, ArrowUp, ArrowDown,
-  Heart, Flame, ChevronRight, Shield, Scale, Footprints,
+  Flame, ChevronRight, Shield, Scale, Footprints,
 } from "lucide-react";
 
 /* ============================================================
@@ -897,101 +897,6 @@ function countSets(exercises) {
   return exercises.reduce((n, e) => n + ((e.sets && e.sets.length) || 0), 0);
 }
 
-/* ---------- Apple Health bridge (via the iOS Shortcuts app) ---------- */
-// Artifacts can't call HealthKit, so we hand a JSON payload to a user-made
-// "Log Lift" shortcut whose Log Workout action writes the session to Health.
-
-export function buildHealthPayload(session) {
-  const start = new Date(session.date);
-  const end = session.endDate ? new Date(session.endDate) : new Date(start.getTime() + 45 * 60000);
-  let minutes = Math.round((end.getTime() - start.getTime()) / 60000);
-  if (!Number.isFinite(minutes) || minutes < 1) minutes = 45;
-  if (minutes > 240) minutes = 240;
-  const local = (d) =>
-    d.toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "numeric" }) +
-    " " + d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-  const sets = countSets(session.exercises || []);
-  return JSON.stringify(
-    {
-      workoutType: session.mode === "calisthenics" ? "Functional Strength Training" : "Traditional Strength Training",
-      day: session.dayType,
-      mode: session.mode,
-      start: session.date,
-      end: end.toISOString(),
-      startLocal: local(start),
-      endLocal: local(end),
-      minutes,
-      calories: Math.round(minutes * 5), // rough strength-training estimate for the Health log
-      sets,
-      exercises: (session.exercises || []).length,
-      summary: `${DAY_LABEL[session.dayType] || session.dayType} day — ${sets} sets · ${headlineFor(session.exercises || [])}`,
-    },
-    null,
-    2
-  );
-}
-
-async function copyToClipboard(text) {
-  try {
-    if (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch (e) { /* fall through to execCommand */ }
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
-    return ok;
-  } catch (e) {
-    return false;
-  }
-}
-
-function HealthLogButton({ session, pushToast }) {
-  const [showRaw, setShowRaw] = useState(false);
-  const doLog = async () => {
-    const payload = buildHealthPayload(session);
-    const ok = await copyToClipboard(payload);
-    if (ok) {
-      pushToast("Copied — run your “Log Lift” shortcut to add it to Health", { tone: "success", ttl: 6000 });
-      try {
-        // On iOS, try to launch the shortcut directly with the clipboard as input.
-        if (/iPhone|iPad|iPod/.test((typeof navigator !== "undefined" && navigator.userAgent) || "")) {
-          window.open("shortcuts://run-shortcut?name=Log%20Lift&input=clipboard", "_blank");
-        }
-      } catch (e) { /* blocked scheme — clipboard path still works */ }
-    } else {
-      setShowRaw(true);
-      pushToast("Couldn't reach the clipboard — copy the text below instead", { tone: "error" });
-    }
-  };
-  return (
-    <div className="flex flex-col gap-2">
-      <button
-        onClick={doLog}
-        className={`flex h-11 items-center justify-center gap-2 rounded-xl border border-zinc-700 px-4 text-sm font-semibold text-zinc-200 active:bg-zinc-800 ${TRANS}`}
-      >
-        <Heart size={16} className="text-lime-400" /> Copy for Apple Health
-      </button>
-      {showRaw && (
-        <textarea
-          readOnly
-          rows={5}
-          value={buildHealthPayload(session)}
-          onFocus={(e) => e.target.select()}
-          className="w-full rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-400 outline-none"
-        />
-      )}
-    </div>
-  );
-}
-
 /* ---------- tiny UI primitives ---------- */
 
 const TRANS = "transition-colors motion-reduce:transition-none";
@@ -1125,7 +1030,6 @@ export default function App() {
   const [viewer, setViewer] = useState(null); // { id } — full-screen session viewer
   const [runOverlay, setRunOverlay] = useState(null); // null | "live" | "manual" — full-screen run tracker
   const [starting, setStarting] = useState(false);
-  const [justFinished, setJustFinished] = useState(null); // last saved session, for the Health card
   const recordsRef = useRef({}); // { exerciseId: { weight, e1rm, date } } — all-time bests for PR flags
   const [rest, setRest] = useState(null); // rest timer { until, total, label } — app-level so it survives tab switches
   const [, restTick] = useState(0);
@@ -1412,7 +1316,6 @@ export default function App() {
       let id = makeSessionId(now);
       for (let bump = 2; index.some((e) => e.id === id); bump += 1) id = `${makeSessionId(now)}-${bump}`;
       const d = { id, date: now.toISOString(), dayType, mode, exercises, warmupDone: {}, coreDone: {}, hold: mode === "gym" ? !!hold : false };
-      setJustFinished(null);
       setRest(null);
       setDraft(d, "now");
       setTab("workout");
@@ -1622,7 +1525,6 @@ export default function App() {
     setDraft(null);
     setRest(null);
     store.remove("draft");
-    setJustFinished(session);
     pushToast(`${DAY_LABEL[d.dayType]} day saved${d.hold ? " — hold, working weights unchanged" : ""} — ${entry.setCount} sets`, { tone: "success" });
     if (prNames.length > 0) {
       pushToast(`🎉 PR: ${prNames.slice(0, 2).join(", ")}${prNames.length > 2 ? ` +${prNames.length - 2}` : ""}`, { tone: "success", ttl: 6500 });
@@ -1744,7 +1646,6 @@ export default function App() {
     const coreDone = {};
     for (const c of session.core || []) if (c.done) coreDone[c.id] = c.done;
     const d = { id: session.id, date: session.date, dayType, mode, exercises, warmupDone, coreDone, hold: !!session.hold };
-    setJustFinished(null);
     setRest(null);
     setDraft(d, "now");
     setTab("workout");
@@ -2004,8 +1905,6 @@ export default function App() {
               starting={starting}
               qlPrompt={qlPrompt}
               answerQl={answerQl}
-              justFinished={justFinished}
-              dismissJustFinished={() => setJustFinished(null)}
               pushToast={pushToast}
               onRun={setRunOverlay}
               onLogEvent={logEvent}
@@ -2158,7 +2057,7 @@ export function runSuggestion(index, nextDay, now = new Date()) {
   return { kind: "go", label: `Run today — ${runs7 + 1} of ${RUN_WEEKLY_TARGET} this week` };
 }
 
-function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, starting, qlPrompt, answerQl, justFinished, dismissJustFinished, pushToast, onRun, onLogEvent, onStartDeload }) {
+function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, starting, qlPrompt, answerQl, pushToast, onRun, onLogEvent, onStartDeload }) {
   const [armedDay, setArmedDay] = useState(null);
   // Off by default, per session — a CNS-limited day, not a standing setting.
   const [hold, setHold] = useState(false);
@@ -2213,28 +2112,6 @@ function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, startin
               </div>
             </div>
             <button aria-label="dismiss" onClick={() => answerQl(qlPrompt.id, "dismissed")} className="flex h-11 w-11 shrink-0 items-center justify-center text-zinc-500">
-              <X size={18} />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {justFinished && (
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
-          <div className="flex items-start gap-3">
-            <Heart size={18} className="mt-1 shrink-0 text-lime-400" />
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold text-zinc-100">
-                {DAY_LABEL[justFinished.dayType]} day saved
-              </div>
-              <div className="mt-1 text-xs text-zinc-500">
-                Send it to Apple Health as a strength workout — needs the one-time shortcut described in Settings.
-              </div>
-              <div className="mt-3">
-                <HealthLogButton session={justFinished} pushToast={pushToast} />
-              </div>
-            </div>
-            <button aria-label="dismiss health card" onClick={dismissJustFinished} className="flex h-11 w-11 shrink-0 items-center justify-center text-zinc-500">
               <X size={18} />
             </button>
           </div>
@@ -3639,8 +3516,6 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, onR
               </button>
             )}
 
-            {!editing && !s.run && s.mode !== "event" && <HealthLogButton session={s} pushToast={pushToast} />}
-
             {!editing && (
               <button
                 onClick={() => { if (armedDelete) onDelete(s.id); else setArmedDelete(true); }}
@@ -4703,21 +4578,6 @@ function SettingsScreen({ config, saveConfig, themeKey, index, onStartDeload }) 
       <button onClick={addExercise} className={`flex h-12 items-center justify-center gap-2 rounded-2xl border border-lime-400/50 text-sm font-bold text-lime-300 active:bg-zinc-900 ${TRANS}`}>
         <Plus size={18} /> Add exercise to {day === "core" ? "Core" : DAY_LABEL[day]}{mode === "calisthenics" ? " (bodyweight)" : ""}
       </button>
-
-      <div className="mt-2 flex flex-col gap-2 rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
-        <div className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
-          <Heart size={16} className="text-lime-400" /> Apple Health (one-time setup)
-        </div>
-        <ol className="flex list-decimal flex-col gap-1 pl-4 text-xs text-zinc-500">
-          <li>In the Shortcuts app, create a shortcut named <span className="font-semibold text-zinc-300">Log Lift</span>.</li>
-          <li>Add <span className="font-semibold text-zinc-300">Get Clipboard</span>, then <span className="font-semibold text-zinc-300">Get Dictionary from Input</span>.</li>
-          <li>Add <span className="font-semibold text-zinc-300">Log Workout</span> — type <span className="font-semibold text-zinc-300">Traditional Strength Training</span>, Start = dictionary value <span className="font-semibold text-zinc-300">startLocal</span>, End = <span className="font-semibold text-zinc-300">endLocal</span>.</li>
-          <li>After a workout, tap <span className="font-semibold text-zinc-300">Copy for Apple Health</span>, then run Log Lift.</li>
-        </ol>
-        <div className="text-xs text-zinc-600">
-          Artifacts can't talk to HealthKit directly, so the shortcut is the bridge. Logged workouts count toward your Exercise ring. Sets and reps stay here — Health only stores the session.
-        </div>
-      </div>
 
       <div className="mt-4 flex flex-col gap-2 border-t border-zinc-800 pt-4">
         <button
