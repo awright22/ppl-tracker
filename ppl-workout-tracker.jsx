@@ -901,8 +901,10 @@ function countSets(exercises) {
 // Artifacts can't call HealthKit, so we hand a JSON payload to a user-made
 // "Log Lift" shortcut whose Log Workout action writes the session to Health.
 
-// The fields one Log Workout action needs: Date = startDate, Duration = minutes, Calories = calories.
-export function healthEntry(session) {
+// The fields one Log Workout action needs. Shortcuts won't reliably turn the
+// startDate text into a date, so minutesAgo lets the shortcut build Date as
+// Current Date minus N minutes — numbers convert cleanly, text dates don't.
+export function healthEntry(session, now = new Date()) {
   const start = new Date(session.date);
   const end = session.endDate ? new Date(session.endDate) : new Date(start.getTime() + 45 * 60000);
   let minutes = Math.round((end.getTime() - start.getTime()) / 60000);
@@ -915,7 +917,12 @@ export function healthEntry(session) {
     const m = String(d.getMinutes()).padStart(2, "0");
     return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()} ${h}:${m} ${d.getHours() < 12 ? "AM" : "PM"}`;
   };
-  return { startDate: local(start), minutes, calories: Math.round(minutes * 5) }; // rough strength-training estimate
+  return {
+    startDate: local(start),
+    minutesAgo: Math.max(0, Math.round((now.getTime() - start.getTime()) / 60000)),
+    minutes,
+    calories: Math.round(minutes * 5), // rough strength-training estimate
+  };
 }
 
 export function buildHealthPayload(session) {
@@ -938,7 +945,7 @@ export function buildHealthBackfill(sessions) {
   const workouts = sessions
     .filter((s) => s && !s.run && s.mode !== "event" && s.mode !== "run" && countSets(s.exercises || []) > 0)
     .sort((a, b) => new Date(a.date) - new Date(b.date))
-    .map(healthEntry);
+    .map((s) => healthEntry(s));
   return { count: workouts.length, payload: JSON.stringify({ workouts }) };
 }
 
@@ -1012,6 +1019,7 @@ function HealthLogButton({ session, pushToast }) {
 // clipboard write inside the tap itself — so the second tap copies a payload
 // that's already built.
 function HealthBackfill({ index, loadSession, pushToast }) {
+  const [sessions, setSessions] = useState(null);
   const [prepared, setPrepared] = useState(null); // { count, payload }
   const [loading, setLoading] = useState(false);
   const [showRaw, setShowRaw] = useState(false);
@@ -1020,15 +1028,20 @@ function HealthBackfill({ index, loadSession, pushToast }) {
     try {
       const lifts = index.filter((e) => e.mode !== "run" && e.mode !== "event");
       const sessions = await Promise.all(lifts.map((e) => loadSession(e.id)));
+      setSessions(sessions);
       setPrepared(buildHealthBackfill(sessions));
     } finally {
       setLoading(false);
     }
   };
   const send = async () => {
-    const ok = await copyToClipboard(prepared.payload);
+    // Rebuilt at tap time so minutesAgo doesn't drift by however long the
+    // button sat there after Prepare.
+    const fresh = buildHealthBackfill(sessions);
+    setPrepared(fresh);
+    const ok = await copyToClipboard(fresh.payload);
     if (ok) {
-      pushToast(`Copied ${prepared.count} workouts — run “Backfill Lifts”`, { tone: "success", ttl: 6000 });
+      pushToast(`Copied ${fresh.count} workouts — run “Backfill Lifts”`, { tone: "success", ttl: 6000 });
       runShortcut("Backfill Lifts");
     } else {
       setShowRaw(true);
@@ -4782,8 +4795,10 @@ function SettingsScreen({ config, saveConfig, themeKey, index, onStartDeload, lo
         <ol className="flex list-decimal flex-col gap-1 pl-4 text-xs text-zinc-500">
           <li>In the Shortcuts app, create a shortcut named <span className="font-semibold text-zinc-300">Log Lift</span>.</li>
           <li>Add <span className="font-semibold text-zinc-300">Get Clipboard</span>, then <span className="font-semibold text-zinc-300">Get Dictionary from Input</span>.</li>
-          <li>Add <span className="font-semibold text-zinc-300">Log Workout</span> — type <span className="font-semibold text-zinc-300">Traditional Strength Training</span>. Set Date = dictionary value <span className="font-semibold text-zinc-300">startDate</span>, Duration = <span className="font-semibold text-zinc-300">minutes</span> (unit: minutes), Calories = <span className="font-semibold text-zinc-300">calories</span>. Leave Distance blank.</li>
-          <li>After a workout, tap <span className="font-semibold text-zinc-300">Copy for Apple Health</span>, then run Log Lift.</li>
+          <li>Add two <span className="font-semibold text-zinc-300">Get Dictionary Value</span> steps, keys <span className="font-semibold text-zinc-300">minutesAgo</span> and <span className="font-semibold text-zinc-300">minutes</span>, each reading from the Dictionary.</li>
+          <li>Add <span className="font-semibold text-zinc-300">Adjust Date</span>: Subtract the minutesAgo value, unit minutes, from <span className="font-semibold text-zinc-300">Current Date</span>.</li>
+          <li>Add <span className="font-semibold text-zinc-300">Log Workout</span> — <span className="font-semibold text-zinc-300">Traditional Strength Training</span>, Date = Adjusted Date, Duration = the minutes value (unit: minutes).</li>
+          <li>After a workout, tap <span className="font-semibold text-zinc-300">Copy for Apple Health</span> — it runs Log Lift for you.</li>
         </ol>
         <div className="text-xs text-zinc-600">
           Artifacts can't talk to HealthKit directly, so the shortcut is the bridge. Logged workouts count toward your Exercise ring. Sets and reps stay here — Health only stores the session.
@@ -4797,8 +4812,8 @@ function SettingsScreen({ config, saveConfig, themeKey, index, onStartDeload, lo
         <ol className="flex list-decimal flex-col gap-1 pl-4 text-xs text-zinc-500">
           <li>Duplicate Log Lift and name the copy <span className="font-semibold text-zinc-300">Backfill Lifts</span>.</li>
           <li>After Get Dictionary, add <span className="font-semibold text-zinc-300">Get Dictionary Value</span> for key <span className="font-semibold text-zinc-300">workouts</span>.</li>
-          <li>Add <span className="font-semibold text-zinc-300">Repeat with Each</span> on that value, and drag Log Workout inside the loop.</li>
-          <li>In Log Workout, re-point Date, Duration and Calories to <span className="font-semibold text-zinc-300">Repeat Item</span>, with keys <span className="font-semibold text-zinc-300">startDate</span>, <span className="font-semibold text-zinc-300">minutes</span>, <span className="font-semibold text-zinc-300">calories</span>.</li>
+          <li>Add <span className="font-semibold text-zinc-300">Repeat with Each</span> on that value, and drag everything below it (the two lookups, Adjust Date, Log Workout) inside the loop.</li>
+          <li>Point the minutesAgo and minutes lookups at <span className="font-semibold text-zinc-300">Repeat Item</span> instead of the Dictionary.</li>
           <li>Tap Prepare, then Send. Run it once — sending again logs every workout twice.</li>
         </ol>
         <HealthBackfill index={index} loadSession={loadSession} pushToast={pushToast} />
