@@ -907,23 +907,22 @@ export function buildHealthPayload(session) {
   let minutes = Math.round((end.getTime() - start.getTime()) / 60000);
   if (!Number.isFinite(minutes) || minutes < 1) minutes = 45;
   if (minutes > 240) minutes = 240;
-  const local = (d) =>
-    d.toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "numeric" }) +
-    " " + d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  // Built by hand: toLocaleTimeString emits a narrow no-break space before
+  // AM/PM on current iOS, which Shortcuts' date parsing can choke on.
+  const local = (d) => {
+    const h = d.getHours() % 12 || 12;
+    const m = String(d.getMinutes()).padStart(2, "0");
+    return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()} ${h}:${m} ${d.getHours() < 12 ? "AM" : "PM"}`;
+  };
   const sets = countSets(session.exercises || []);
+  // Keys match the Log Workout action's fields: Date = startDate, Duration = minutes, Calories = calories.
   return JSON.stringify(
     {
-      workoutType: session.mode === "calisthenics" ? "Functional Strength Training" : "Traditional Strength Training",
-      day: session.dayType,
-      mode: session.mode,
-      start: session.date,
-      end: end.toISOString(),
-      startLocal: local(start),
-      endLocal: local(end),
+      startDate: local(start),
       minutes,
       calories: Math.round(minutes * 5), // rough strength-training estimate for the Health log
+      workoutType: session.mode === "calisthenics" ? "Functional Strength Training" : "Traditional Strength Training",
       sets,
-      exercises: (session.exercises || []).length,
       summary: `${DAY_LABEL[session.dayType] || session.dayType} day — ${sets} sets · ${headlineFor(session.exercises || [])}`,
     },
     null,
@@ -963,7 +962,9 @@ function HealthLogButton({ session, pushToast }) {
       try {
         // On iOS, try to launch the shortcut directly with the clipboard as input.
         if (/iPhone|iPad|iPod/.test((typeof navigator !== "undefined" && navigator.userAgent) || "")) {
-          window.open("shortcuts://run-shortcut?name=Log%20Lift&input=clipboard", "_blank");
+          // location, not window.open: after the clipboard await the tap's user
+          // activation is gone, so iOS blocks a popup but still hands off a URL scheme.
+          window.location.href = "shortcuts://run-shortcut?name=Log%20Lift";
         }
       } catch (e) { /* blocked scheme — clipboard path still works */ }
     } else {
@@ -4711,7 +4712,7 @@ function SettingsScreen({ config, saveConfig, themeKey, index, onStartDeload }) 
         <ol className="flex list-decimal flex-col gap-1 pl-4 text-xs text-zinc-500">
           <li>In the Shortcuts app, create a shortcut named <span className="font-semibold text-zinc-300">Log Lift</span>.</li>
           <li>Add <span className="font-semibold text-zinc-300">Get Clipboard</span>, then <span className="font-semibold text-zinc-300">Get Dictionary from Input</span>.</li>
-          <li>Add <span className="font-semibold text-zinc-300">Log Workout</span> — type <span className="font-semibold text-zinc-300">Traditional Strength Training</span>, Start = dictionary value <span className="font-semibold text-zinc-300">startLocal</span>, End = <span className="font-semibold text-zinc-300">endLocal</span>.</li>
+          <li>Add <span className="font-semibold text-zinc-300">Log Workout</span> — type <span className="font-semibold text-zinc-300">Traditional Strength Training</span>. Set Date = dictionary value <span className="font-semibold text-zinc-300">startDate</span>, Duration = <span className="font-semibold text-zinc-300">minutes</span> (unit: minutes), Calories = <span className="font-semibold text-zinc-300">calories</span>. Leave Distance blank.</li>
           <li>After a workout, tap <span className="font-semibold text-zinc-300">Copy for Apple Health</span>, then run Log Lift.</li>
         </ol>
         <div className="text-xs text-zinc-600">
