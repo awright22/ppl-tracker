@@ -911,17 +911,36 @@ const WARMUP_NET_MET = 1.3;
 const LB_TO_KG = 0.45359237;
 const FALLBACK_BODY_KG = 80; // only when no weigh-in has ever been logged
 
-// Body weight (kg) from the weigh-in closest in time to the session, so a
-// backfilled workout uses what you weighed then, not now.
+// Body weight (kg) at a session's date: a straight line between the
+// weigh-ins on either side, held flat before the first and after the last —
+// so a backfilled workout uses what you weighed then, not now.
 export function bodyKgAt(weights, dateIso) {
   const t = new Date(dateIso).getTime();
-  let best = null;
-  for (const w of weights || []) {
-    if (!(Number(w.weight) > 0)) continue;
-    const gap = Math.abs(new Date(w.date).getTime() - t);
-    if (Number.isFinite(gap) && (!best || gap < best.gap)) best = { gap, lb: Number(w.weight) };
-  }
-  return best ? best.lb * LB_TO_KG : FALLBACK_BODY_KG;
+  const pts = (weights || [])
+    .map((w) => ({ t: new Date(w.date).getTime(), lb: Number(w.weight) }))
+    .filter((p) => Number.isFinite(p.t) && p.lb > 0)
+    .sort((a, b) => a.t - b.t);
+  if (pts.length === 0) return FALLBACK_BODY_KG;
+  if (!Number.isFinite(t) || t <= pts[0].t) return pts[0].lb * LB_TO_KG;
+  const last = pts[pts.length - 1];
+  if (t >= last.t) return last.lb * LB_TO_KG;
+  const hi = pts.findIndex((p) => p.t >= t);
+  const a = pts[hi - 1], b = pts[hi];
+  return (a.lb + ((b.lb - a.lb) * (t - a.t)) / (b.t - a.t)) * LB_TO_KG;
+}
+
+// Workouts logged before the first weigh-in have nothing to interpolate
+// from, so an optional "weight at first workout" becomes an extra point at
+// the earliest session's date. Ignored once a weigh-in is at least that old.
+export function withStartWeight(weights, index, startLb) {
+  const lb = Number(startLb);
+  const first = (index || []).reduce((m, e) => {
+    const t = e.mode === "event" ? NaN : new Date(e.date).getTime();
+    return Number.isFinite(t) && t < m ? t : m;
+  }, Infinity);
+  if (!(lb > 0) || first === Infinity) return weights || [];
+  const covered = (weights || []).some((w) => new Date(w.date).getTime() <= first);
+  return covered ? weights : [...(weights || []), { id: "health-start", date: new Date(first).toISOString(), weight: lb }];
 }
 
 // The fields one Log Workout action needs. minutes stays the full session
@@ -2066,6 +2085,11 @@ export default function App() {
   const themeKey = config && config.ui && config.ui.theme === "dark" ? "dark" : "paper";
   const activeTheme = THEMES[themeKey];
   const css = useMemo(() => themeCss(THEMES[themeKey]), [themeKey]);
+  // Weigh-ins plus the optional first-workout weight — Health calorie math only.
+  const healthWeights = useMemo(
+    () => withStartWeight(weights, index, config && config.healthStartWeight),
+    [weights, index, config]
+  );
   useEffect(() => {
     try {
       document.documentElement.style.background = activeTheme.page;
@@ -2118,7 +2142,7 @@ export default function App() {
               qlPrompt={qlPrompt}
               answerQl={answerQl}
               justFinished={justFinished}
-              weights={weights}
+              weights={healthWeights}
               dismissJustFinished={() => setJustFinished(null)}
               pushToast={pushToast}
               onRun={setRunOverlay}
@@ -2137,7 +2161,7 @@ export default function App() {
           <WeightScreen config={config} weights={weights} onLog={logWeight} onDelete={deleteWeight} />
         )}
         {tab === "settings" && (
-          <SettingsScreen config={config} saveConfig={saveConfig} themeKey={themeKey} index={index} weights={weights} onStartDeload={startDeloadWeek} loadSession={loadSession} pushToast={pushToast} />
+          <SettingsScreen config={config} saveConfig={saveConfig} themeKey={themeKey} index={index} weights={healthWeights} onStartDeload={startDeloadWeek} loadSession={loadSession} pushToast={pushToast} />
         )}
       </div>
 
@@ -2145,7 +2169,7 @@ export default function App() {
         <SessionViewer
           id={viewer.id}
           config={config}
-          weights={weights}
+          weights={healthWeights}
           loadSession={loadSession}
           onClose={() => setViewer(null)}
           onSave={saveEditedSession}
@@ -4848,6 +4872,12 @@ function SettingsScreen({ config, saveConfig, themeKey, index, weights, onStartD
           <li>Point all three lookups at <span className="font-semibold text-zinc-300">Repeat Item</span> instead of the Clipboard, and delete any Stop and Output step — it ends the loop after one workout.</li>
           <li>Tap Prepare, then Send. Run it once — sending again logs every workout twice.</li>
         </ol>
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-xs text-zinc-500">
+            Weight at your first workout — calories for sessions before your first weigh-in use a straight line from this to that weigh-in. 0 = off.
+          </div>
+          <Stepper small value={Number(config.healthStartWeight) || 0} onChange={(v) => saveConfig({ ...config, healthStartWeight: Number(v) > 0 ? Number(v) : undefined })} step={1} min={0} max={600} unit="lb" />
+        </div>
         <HealthBackfill index={index} weights={weights} loadSession={loadSession} pushToast={pushToast} />
       </div>
 
