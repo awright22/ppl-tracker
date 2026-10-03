@@ -901,10 +901,34 @@ function countSets(exercises) {
 // Artifacts can't call HealthKit, so we hand a JSON payload to a user-made
 // "Log Lift" shortcut whose Log Workout action writes the session to Health.
 
-// The fields one Log Workout action needs. Shortcuts won't reliably turn the
-// startDate text into a date, so minutesAgo lets the shortcut build Date as
-// Current Date minus N minutes — numbers convert cleanly, text dates don't.
-export function healthEntry(session, now = new Date()) {
+// Active-calorie estimate: (MET − 1) × body kg × hours, with Compendium of
+// Physical Activities values — 3.5 MET for multi-exercise resistance training,
+// 2.3 for the mild stretching/mobility done before the first set. Health logs
+// these as active energy, so the resting 1 MET comes off. Still an estimate:
+// no heart rate, and rest length isn't measured.
+const LIFT_NET_MET = 2.5;
+const WARMUP_NET_MET = 1.3;
+const LB_TO_KG = 0.45359237;
+const FALLBACK_BODY_KG = 80; // only when no weigh-in has ever been logged
+
+// Body weight (kg) from the weigh-in closest in time to the session, so a
+// backfilled workout uses what you weighed then, not now.
+export function bodyKgAt(weights, dateIso) {
+  const t = new Date(dateIso).getTime();
+  let best = null;
+  for (const w of weights || []) {
+    if (!(Number(w.weight) > 0)) continue;
+    const gap = Math.abs(new Date(w.date).getTime() - t);
+    if (Number.isFinite(gap) && (!best || gap < best.gap)) best = { gap, lb: Number(w.weight) };
+  }
+  return best ? best.lb * LB_TO_KG : FALLBACK_BODY_KG;
+}
+
+// The fields one Log Workout action needs. minutes stays the full session
+// (that's what Health shows as the workout's length); only the calories
+// treat the pre-first-set warm-up at the lower rate. Sessions saved before
+// liftStart existed have no split and count entirely at the lifting rate.
+export function healthEntry(session, { now = new Date(), weights } = {}) {
   const start = new Date(session.date);
   const end = session.endDate ? new Date(session.endDate) : new Date(start.getTime() + 45 * 60000);
   let minutes = Math.round((end.getTime() - start.getTime()) / 60000);
@@ -917,19 +941,23 @@ export function healthEntry(session, now = new Date()) {
     const m = String(d.getMinutes()).padStart(2, "0");
     return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()} ${h}:${m} ${d.getHours() < 12 ? "AM" : "PM"}`;
   };
+  let warmMin = session.liftStart ? (new Date(session.liftStart).getTime() - start.getTime()) / 60000 : 0;
+  if (!Number.isFinite(warmMin) || warmMin < 0) warmMin = 0;
+  if (warmMin > minutes) warmMin = minutes;
+  const kg = bodyKgAt(weights, session.date);
   return {
     startDate: local(start),
     minutesAgo: Math.max(0, Math.round((now.getTime() - start.getTime()) / 60000)),
     minutes,
-    calories: Math.round(minutes * 5), // rough strength-training estimate
+    calories: Math.max(1, Math.round((kg * (LIFT_NET_MET * (minutes - warmMin) + WARMUP_NET_MET * warmMin)) / 60)),
   };
 }
 
-export function buildHealthPayload(session) {
+export function buildHealthPayload(session, weights) {
   const sets = countSets(session.exercises || []);
   return JSON.stringify(
     {
-      ...healthEntry(session),
+      ...healthEntry(session, { weights }),
       workoutType: session.mode === "calisthenics" ? "Functional Strength Training" : "Traditional Strength Training",
       sets,
       summary: `${DAY_LABEL[session.dayType] || session.dayType} day — ${sets} sets · ${headlineFor(session.exercises || [])}`,
@@ -941,11 +969,11 @@ export function buildHealthPayload(session) {
 
 // Every lifting session, oldest first, for a one-time catch-up run. Runs and
 // logged events stay out, as do sessions with no sets logged.
-export function buildHealthBackfill(sessions) {
+export function buildHealthBackfill(sessions, weights) {
   const workouts = sessions
     .filter((s) => s && !s.run && s.mode !== "event" && s.mode !== "run" && countSets(s.exercises || []) > 0)
     .sort((a, b) => new Date(a.date) - new Date(b.date))
-    .map((s) => healthEntry(s));
+    .map((s) => healthEntry(s, { weights }));
   return { count: workouts.length, payload: JSON.stringify({ workouts }) };
 }
 
@@ -981,10 +1009,10 @@ async function copyToClipboard(text) {
   }
 }
 
-function HealthLogButton({ session, pushToast }) {
+function HealthLogButton({ session, weights, pushToast }) {
   const [showRaw, setShowRaw] = useState(false);
   const doLog = async () => {
-    const payload = buildHealthPayload(session);
+    const payload = buildHealthPayload(session, weights);
     const ok = await copyToClipboard(payload);
     if (ok) {
       pushToast("Copied — run your “Log Lift” shortcut to add it to Health", { tone: "success", ttl: 6000 });
@@ -1006,7 +1034,7 @@ function HealthLogButton({ session, pushToast }) {
         <textarea
           readOnly
           rows={5}
-          value={buildHealthPayload(session)}
+          value={buildHealthPayload(session, weights)}
           onFocus={(e) => e.target.select()}
           className="w-full rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-400 outline-none"
         />
@@ -1018,7 +1046,7 @@ function HealthLogButton({ session, pushToast }) {
 // Two taps on purpose: loading every session is async, and iOS only allows a
 // clipboard write inside the tap itself — so the second tap copies a payload
 // that's already built.
-function HealthBackfill({ index, loadSession, pushToast }) {
+function HealthBackfill({ index, weights, loadSession, pushToast }) {
   const [sessions, setSessions] = useState(null);
   const [prepared, setPrepared] = useState(null); // { count, payload }
   const [loading, setLoading] = useState(false);
@@ -1029,7 +1057,7 @@ function HealthBackfill({ index, loadSession, pushToast }) {
       const lifts = index.filter((e) => e.mode !== "run" && e.mode !== "event");
       const sessions = await Promise.all(lifts.map((e) => loadSession(e.id)));
       setSessions(sessions);
-      setPrepared(buildHealthBackfill(sessions));
+      setPrepared(buildHealthBackfill(sessions, weights));
     } finally {
       setLoading(false);
     }
@@ -1037,7 +1065,7 @@ function HealthBackfill({ index, loadSession, pushToast }) {
   const send = async () => {
     // Rebuilt at tap time so minutesAgo doesn't drift by however long the
     // button sat there after Prepare.
-    const fresh = buildHealthBackfill(sessions);
+    const fresh = buildHealthBackfill(sessions, weights);
     setPrepared(fresh);
     const ok = await copyToClipboard(fresh.payload);
     if (ok) {
@@ -1636,6 +1664,7 @@ export default function App() {
       (d.dayType === "legs" || d.exercises.some((e) => e.gated && e.sets.length > 0));
     const session = {
       id: d.id, date: d.date, endDate: new Date(opts.endAt || Date.now()).toISOString(),
+      liftStart: d.liftStart || undefined,
       dayType: d.dayType, mode: d.mode,
       exercises: kept, qlCheck: needsQlCheck ? null : undefined,
       warmup, core,
@@ -1827,7 +1856,7 @@ export default function App() {
     for (const w of session.warmup || []) if (w.done) warmupDone[w.id] = true;
     const coreDone = {};
     for (const c of session.core || []) if (c.done) coreDone[c.id] = c.done;
-    const d = { id: session.id, date: session.date, dayType, mode, exercises, warmupDone, coreDone, hold: !!session.hold };
+    const d = { id: session.id, date: session.date, liftStart: session.liftStart, dayType, mode, exercises, warmupDone, coreDone, hold: !!session.hold };
     setJustFinished(null);
     setRest(null);
     setDraft(d, "now");
@@ -2089,6 +2118,7 @@ export default function App() {
               qlPrompt={qlPrompt}
               answerQl={answerQl}
               justFinished={justFinished}
+              weights={weights}
               dismissJustFinished={() => setJustFinished(null)}
               pushToast={pushToast}
               onRun={setRunOverlay}
@@ -2107,7 +2137,7 @@ export default function App() {
           <WeightScreen config={config} weights={weights} onLog={logWeight} onDelete={deleteWeight} />
         )}
         {tab === "settings" && (
-          <SettingsScreen config={config} saveConfig={saveConfig} themeKey={themeKey} index={index} onStartDeload={startDeloadWeek} loadSession={loadSession} pushToast={pushToast} />
+          <SettingsScreen config={config} saveConfig={saveConfig} themeKey={themeKey} index={index} weights={weights} onStartDeload={startDeloadWeek} loadSession={loadSession} pushToast={pushToast} />
         )}
       </div>
 
@@ -2115,6 +2145,7 @@ export default function App() {
         <SessionViewer
           id={viewer.id}
           config={config}
+          weights={weights}
           loadSession={loadSession}
           onClose={() => setViewer(null)}
           onSave={saveEditedSession}
@@ -2242,7 +2273,7 @@ export function runSuggestion(index, nextDay, now = new Date()) {
   return { kind: "go", label: `Run today — ${runs7 + 1} of ${RUN_WEEKLY_TARGET} this week` };
 }
 
-function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, starting, qlPrompt, answerQl, justFinished, dismissJustFinished, pushToast, onRun, onLogEvent, onStartDeload }) {
+function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, starting, qlPrompt, answerQl, justFinished, dismissJustFinished, weights, pushToast, onRun, onLogEvent, onStartDeload }) {
   const [armedDay, setArmedDay] = useState(null);
   // Off by default, per session — a CNS-limited day, not a standing setting.
   const [hold, setHold] = useState(false);
@@ -2315,7 +2346,7 @@ function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, startin
                 Send it to Apple Health as a strength workout — needs the one-time shortcut described in Settings.
               </div>
               <div className="mt-3">
-                <HealthLogButton session={justFinished} pushToast={pushToast} />
+                <HealthLogButton session={justFinished} weights={weights} pushToast={pushToast} />
               </div>
             </div>
             <button aria-label="dismiss health card" onClick={dismissJustFinished} className="flex h-11 w-11 shrink-0 items-center justify-center text-zinc-500">
@@ -2979,7 +3010,8 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, onAccept
       if (cur.unilateral) { set.repsL = Number(p.repsL) || 0; set.repsR = Number(p.repsR) || 0; }
       else set.reps = Number(p.reps) || 0;
       const restObj = { until: Date.now() + (cur.restSec || 90) * 1000, total: cur.restSec || 90, label: cur.name };
-      return { ...patchExercise(d, idx, { sets: [...cur.sets, set] }), rest: restObj };
+      // First set of the session marks where warm-up ends (Health calorie split).
+      return { ...patchExercise(d, idx, { sets: [...cur.sets, set] }), rest: restObj, liftStart: d.liftStart || new Date().toISOString() };
     }, "now"); // checkpoint the draft (sets + running rest timer) on every logged set
     if (onSetLogged) onSetLogged({ until: Date.now() + (ex.restSec || 90) * 1000, total: ex.restSec || 90, label: ex.name });
   };
@@ -3356,7 +3388,7 @@ function findConfigEx(config, exerciseId) {
   return (config.core || []).find((e) => e.id === exerciseId) || null;
 }
 
-function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, onReopen, hasDraft, pushToast }) {
+function SessionViewer({ id, config, weights, loadSession, onClose, onSave, onDelete, onReopen, hasDraft, pushToast }) {
   const [session, setSession] = useState(null);
   const [missing, setMissing] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -3723,7 +3755,7 @@ function SessionViewer({ id, config, loadSession, onClose, onSave, onDelete, onR
               </button>
             )}
 
-            {!editing && !s.run && s.mode !== "event" && <HealthLogButton session={s} pushToast={pushToast} />}
+            {!editing && !s.run && s.mode !== "event" && <HealthLogButton session={s} weights={weights} pushToast={pushToast} />}
 
             {!editing && (
               <button
@@ -4618,7 +4650,7 @@ function WeightScreen({ config, weights, onLog, onDelete }) {
 
 /* ---------- settings ---------- */
 
-function SettingsScreen({ config, saveConfig, themeKey, index, onStartDeload, loadSession, pushToast }) {
+function SettingsScreen({ config, saveConfig, themeKey, index, weights, onStartDeload, loadSession, pushToast }) {
   const [mode, setMode] = useState("gym");
   const [day, setDay] = useState("push");
   const [editingId, setEditingId] = useState(null);
@@ -4816,7 +4848,7 @@ function SettingsScreen({ config, saveConfig, themeKey, index, onStartDeload, lo
           <li>Point all three lookups at <span className="font-semibold text-zinc-300">Repeat Item</span> instead of the Clipboard, and delete any Stop and Output step — it ends the loop after one workout.</li>
           <li>Tap Prepare, then Send. Run it once — sending again logs every workout twice.</li>
         </ol>
-        <HealthBackfill index={index} loadSession={loadSession} pushToast={pushToast} />
+        <HealthBackfill index={index} weights={weights} loadSession={loadSession} pushToast={pushToast} />
       </div>
 
       <div className="mt-4 flex flex-col gap-2 border-t border-zinc-800 pt-4">

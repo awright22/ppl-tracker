@@ -898,13 +898,34 @@ section("Apple Health payloads");
     exercises: [{ sets: [{ reps: 5, weight: 100 }] }], ...extra,
   });
   test("healthEntry: plain-space local startDate, real duration, calories", () => {
-    const e = T.healthEntry(lift("a", at(12, 5), at(13, 0)), new Date(at(15, 5)));
-    assert.deepEqual(e, { startDate: "10/3/2026 12:05 PM", minutesAgo: 180, minutes: 55, calories: 275 });
+    const e = T.healthEntry(lift("a", at(12, 5), at(13, 0)), { now: new Date(at(15, 5)) });
+    // no weigh-ins -> 80 kg fallback: 2.5 net MET x 80 kg x 55/60 h = 183.3
+    assert.deepEqual(e, { startDate: "10/3/2026 12:05 PM", minutesAgo: 180, minutes: 55, calories: 183 });
   });
   test("healthEntry: midnight hour reads 12 AM; missing end defaults to 45 min", () => {
     const e = T.healthEntry({ date: at(0, 30), exercises: [] });
     assert.equal(e.startDate, "10/3/2026 12:30 AM");
     assert.equal(e.minutes, 45);
+  });
+  test("bodyKgAt: nearest weigh-in in time, lb -> kg; 80 kg when none", () => {
+    const weights = [
+      { id: "w2", date: at(8, 0), weight: 200 },
+      { id: "w1", date: new Date(2026, 5, 1, 8, 0).toISOString(), weight: 180 },
+    ];
+    assert.ok(Math.abs(T.bodyKgAt(weights, at(12, 0)) - 90.718) < 0.01);
+    assert.ok(Math.abs(T.bodyKgAt(weights, new Date(2026, 5, 3).toISOString()) - 81.647) < 0.01);
+    assert.equal(T.bodyKgAt([], at(12, 0)), 80);
+  });
+  test("healthEntry calories: body weight x duration, warm-up at the lower rate", () => {
+    const weights = [{ id: "w", date: at(8, 0), weight: 176.37 }]; // 80.0 kg
+    // 77 min all lifting: 2.5 x 80 x 77/60 = 256.7
+    assert.equal(T.healthEntry(lift("a", at(12, 22), at(13, 39)), { weights }).calories, 257);
+    // 12 min warm-up + 65 lifting: 80 x (2.5x65 + 1.3x12)/60 = 237.5 (kg is 79.9999 -> 237)
+    const split = T.healthEntry(lift("b", at(12, 22), at(13, 39), { liftStart: at(12, 34) }), { weights });
+    assert.equal(split.calories, 237);
+    assert.equal(split.minutes, 77); // logged length is still the whole session
+    // a liftStart outside the session is ignored / clamped, never negative
+    assert.equal(T.healthEntry(lift("c", at(12, 22), at(13, 39), { liftStart: at(11, 0) }), { weights }).calories, 257);
   });
   test("buildHealthBackfill: lifts only, oldest first, empty sessions dropped", () => {
     const { count, payload } = T.buildHealthBackfill([
