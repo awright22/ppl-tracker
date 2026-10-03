@@ -4795,9 +4795,9 @@ function SettingsScreen({ config, saveConfig, themeKey, index, onStartDeload, lo
         <ol className="flex list-decimal flex-col gap-1 pl-4 text-xs text-zinc-500">
           <li>In the Shortcuts app, create a shortcut named <span className="font-semibold text-zinc-300">Log Lift</span>.</li>
           <li>Add <span className="font-semibold text-zinc-300">Get Clipboard</span>, then <span className="font-semibold text-zinc-300">Get Dictionary from Input</span>.</li>
-          <li>Add two <span className="font-semibold text-zinc-300">Get Dictionary Value</span> steps, keys <span className="font-semibold text-zinc-300">minutesAgo</span> and <span className="font-semibold text-zinc-300">minutes</span>, each reading from the Dictionary.</li>
+          <li>Add three <span className="font-semibold text-zinc-300">Get Dictionary Value</span> steps — keys <span className="font-semibold text-zinc-300">minutesAgo</span>, <span className="font-semibold text-zinc-300">minutes</span>, <span className="font-semibold text-zinc-300">calories</span> — each reading from the Dictionary (solid bubble, not pale).</li>
           <li>Add <span className="font-semibold text-zinc-300">Adjust Date</span>: Subtract the minutesAgo value, unit minutes, from <span className="font-semibold text-zinc-300">Current Date</span>.</li>
-          <li>Add <span className="font-semibold text-zinc-300">Log Workout</span> — <span className="font-semibold text-zinc-300">Traditional Strength Training</span>, Date = Adjusted Date, Duration = the minutes value (unit: minutes).</li>
+          <li>Add <span className="font-semibold text-zinc-300">Log Workout</span> — <span className="font-semibold text-zinc-300">Traditional Strength Training</span>, Date = Adjusted Date, Duration = minutes value (unit: minutes), Calories = calories value, Distance = 0. Calories and Distance are required.</li>
           <li>After a workout, tap <span className="font-semibold text-zinc-300">Copy for Apple Health</span> — it runs Log Lift for you.</li>
         </ol>
         <div className="text-xs text-zinc-600">
@@ -4812,8 +4812,8 @@ function SettingsScreen({ config, saveConfig, themeKey, index, onStartDeload, lo
         <ol className="flex list-decimal flex-col gap-1 pl-4 text-xs text-zinc-500">
           <li>Duplicate Log Lift and name the copy <span className="font-semibold text-zinc-300">Backfill Lifts</span>.</li>
           <li>After Get Dictionary, add <span className="font-semibold text-zinc-300">Get Dictionary Value</span> for key <span className="font-semibold text-zinc-300">workouts</span>.</li>
-          <li>Add <span className="font-semibold text-zinc-300">Repeat with Each</span> on that value, and drag everything below it (the two lookups, Adjust Date, Log Workout) inside the loop.</li>
-          <li>Point the minutesAgo and minutes lookups at <span className="font-semibold text-zinc-300">Repeat Item</span> instead of the Dictionary.</li>
+          <li>Add <span className="font-semibold text-zinc-300">Repeat with Each</span> on that value, and drag everything below it (the three lookups, Adjust Date, Log Workout) inside the loop.</li>
+          <li>Point all three lookups at <span className="font-semibold text-zinc-300">Repeat Item</span> instead of the Dictionary, and delete any Stop and Output step — it ends the loop after one workout.</li>
           <li>Tap Prepare, then Send. Run it once — sending again logs every workout twice.</li>
         </ol>
         <HealthBackfill index={index} loadSession={loadSession} pushToast={pushToast} />
