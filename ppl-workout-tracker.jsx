@@ -205,6 +205,7 @@ export const SEED_CONFIG = {
 /* ---------- constants & small utils ---------- */
 
 const DAY_KEYS = ["push", "pull", "legs"];
+const EVENT_LABEL = { golf: "Golf", bowling: "Bowling", softball: "Softball" };
 const DAY_LABEL = { push: "Push", pull: "Pull", legs: "Legs", upper: "Upper", run: "Run", event: "Event" };
 const LOAD_LABEL = {
   "db-pair": "per DB", "db-single": "DB", stack: "stack",
@@ -2043,14 +2044,14 @@ export default function App() {
     pushToast("Deload week on — gym drafts pre-set to 2×@90% through Sunday", { tone: "success", ttl: 6000 });
   }, [persist, pushToast]);
 
-  /* --- one-tap events (golf, bowling) --- */
+  /* --- one-tap events (golf, bowling, softball) --- */
   // Minimal sessions whose only job is carrying the next-day QL check. They
   // never advance the clocks or count toward week status (mode "event").
   const logEvent = useCallback(async (eventType) => {
     const now = new Date();
     let id = makeSessionId(now);
     for (let bump = 2; index.some((e) => e.id === id); bump += 1) id = `${makeSessionId(now)}-${bump}`;
-    const label = eventType === "bowling" ? "Bowling" : "Golf";
+    const label = EVENT_LABEL[eventType] || "Golf";
     const session = {
       id, date: now.toISOString(), endDate: now.toISOString(),
       dayType: "event", mode: "event", eventType, exercises: [], qlCheck: null,
@@ -2618,7 +2619,7 @@ function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, startin
               <div className="text-sm font-semibold text-zinc-100">Log event</div>
               <div className="text-xs text-zinc-500">Counts for the QL check, not the split</div>
             </div>
-            <div className="flex shrink-0 gap-2">
+            <div className="flex shrink-0 flex-wrap justify-end gap-2">
               <button
                 onClick={() => onLogEvent("golf")}
                 className={`h-11 rounded-xl bg-zinc-800 px-4 text-sm font-semibold text-zinc-200 active:bg-zinc-700 ${TRANS}`}
@@ -2630,6 +2631,12 @@ function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, startin
                 className={`h-11 rounded-xl bg-zinc-800 px-4 text-sm font-semibold text-zinc-200 active:bg-zinc-700 ${TRANS}`}
               >
                 🎳 Bowling
+              </button>
+              <button
+                onClick={() => onLogEvent("softball")}
+                className={`h-11 rounded-xl bg-zinc-800 px-4 text-sm font-semibold text-zinc-200 active:bg-zinc-700 ${TRANS}`}
+              >
+                🥎 Softball
               </button>
             </div>
           </div>
@@ -3550,7 +3557,7 @@ function SessionViewer({ id, config, weights, loadSession, onClose, onSave, onDe
               {s && (
                 <>
                   <div className="truncate text-base font-bold">
-                    {s.mode === "event" ? (s.eventType === "bowling" ? "Bowling" : "Golf") : DAY_LABEL[s.dayType] || s.dayType}
+                    {s.mode === "event" ? (EVENT_LABEL[s.eventType] || "Golf") : DAY_LABEL[s.dayType] || s.dayType}
                     {s.mode === "calisthenics" && <span className="ml-2 rounded bg-zinc-800 px-2 py-1 text-xs font-semibold text-zinc-300">BW</span>}
                   </div>
                   <div className="text-xs text-zinc-500">{fullDate(s.date)}</div>
