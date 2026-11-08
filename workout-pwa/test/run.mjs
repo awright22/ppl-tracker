@@ -822,7 +822,7 @@ section("core ladder");
   const bent = T.SEED_CONFIG.core[0];
 
   test("seed ladder chains bent -> straight -> weighted; checkbox core retired (v5)", () => {
-    assert.deepEqual(T.SEED_CONFIG.core.map((e) => e.id), ["cchair-bent", "cchair-straight", "cchair-weighted"]);
+    assert.deepEqual(T.SEED_CONFIG.core.filter((e) => !e.day).map((e) => e.id), ["cchair-bent", "cchair-straight", "cchair-weighted"]);
     assert.equal(T.SEED_CONFIG.core[0].progressesTo, "cchair-straight");
     assert.equal(T.SEED_CONFIG.core[1].progressesTo, "cchair-weighted");
     assert.equal(T.SEED_CONFIG.core[2].progressesTo, undefined);
@@ -1096,6 +1096,70 @@ section("legs swap: migration");
     const c = { ...liveCfg(), retired: { "row-csdb": { id: "row-csdb", current: 75 } } };
     const m = T.migrateLegsSwapNov2026(c);
     assert.deepEqual(Object.keys(m.retired).sort(), ["calf-seated", "row-csdb", "slpress"]);
+  });
+}
+
+section("legs swap: suitcase carry in core");
+{
+  const carry = T.SEED_CONFIG.core.find((e) => e.id === "suitcase-carry");
+  test("seed: carry is a legs-day core extra, timed + unilateral + loaded", () => {
+    assert.equal(T.SEED_CONFIG.core[T.SEED_CONFIG.core.length - 1].id, "suitcase-carry");
+    assert.equal(carry.day, "legs");
+    assert.equal(carry.timed, true);
+    assert.equal(carry.unilateral, true);
+    assert.equal(carry.loadType, "db-single");
+    assert.equal(carry.current, 50);
+    assert.equal(carry.progressesTo, undefined);
+    assert.ok(!T.SEED_CONFIG.days.legs.some((e) => e.id === "suitcase-carry"));
+  });
+  test("ladder ignores day extras; core section drafts rung + legs extra on legs only", () => {
+    const allDone = T.SEED_CONFIG.core.map((e) => (e.day ? e : { ...e, graduated: true }));
+    assert.equal(T.activeCoreRung(allDone), null); // the carry is never a rung
+    assert.deepEqual(T.coreSlotsFor(T.SEED_CONFIG.core, "legs").map((e) => e.id), ["cchair-bent", "suitcase-carry"]);
+    assert.deepEqual(T.coreSlotsFor(T.SEED_CONFIG.core, "push").map((e) => e.id), ["cchair-bent"]);
+    assert.deepEqual(T.coreSlotsFor(T.SEED_CONFIG.core, "upper").map((e) => e.id), ["cchair-bent"]);
+    assert.deepEqual(T.coreSlotsFor(allDone, "legs").map((e) => e.id), ["suitcase-carry"]);
+  });
+  test("migration appends the carry to the live core once; ladder state untouched", () => {
+    const liveCore = [
+      { id: "cchair-bent", current: 0, progressesTo: "cchair-straight", graduated: true },
+      { id: "cchair-straight", current: 0, progressesTo: "cchair-weighted" },
+      { id: "cchair-weighted", current: 5 },
+    ];
+    const c = { days: { legs: [{ id: "goblet", gated: true, replaces: "legpress", current: 70 }, { id: "legpress", current: 400 }] }, core: liveCore };
+    const m = T.migrateLegsSwapNov2026(c);
+    assert.deepEqual(m.core.map((e) => e.id), ["cchair-bent", "cchair-straight", "cchair-weighted", "suitcase-carry"]);
+    assert.deepEqual(m.core.slice(0, 3), liveCore);
+    assert.equal(T.activeCoreRung(m.core).id, "cchair-straight");
+    const withCarry = T.migrateLegsSwapNov2026({ ...c, core: [...liveCore, { id: "suitcase-carry", day: "legs", current: 60 }] });
+    assert.equal(withCarry.core.filter((e) => e.id === "suitcase-carry").length, 1);
+    assert.equal(withCarry.core[3].current, 60);
+    assert.equal("core" in T.migrateLegsSwapNov2026({ days: { legs: [] } }), false); // no core yet: seed step owns it
+  });
+  test("migrated legs order matches the plan", () => {
+    const live = { days: { legs: [
+      { id: "rdl", gated: true, replaces: "backext-45", gateStreak: 6, current: 95 }, { id: "backext-45", current: 65 },
+      { id: "slpress", current: 210 }, { id: "goblet", gated: true, replaces: "legpress", current: 70 }, { id: "legpress", current: 400 },
+      { id: "slcurl", current: 50 }, { id: "calf-seated", current: 160 },
+    ] }, core: [] };
+    const m = T.migrateLegsSwapNov2026(live);
+    assert.deepEqual(m.days.legs.map((e) => e.id),
+      ["squat-hb-paused", "goblet", "legpress", "rdl", "backext-45", "stepup-db", "slcurl", "calf-sl-standing"]);
+    assert.deepEqual(m.core.map((e) => e.id), ["suitcase-carry"]);
+  });
+  test("timed + unilateral + weighted: bump on the weaker side's seconds, +5 lb", () => {
+    const now = at(2026, 11, 8);
+    const rules = { returnAfterDays: 17, holdAfterDays: 12 };
+    const perf = (L, R) => ({ date: iso(2026, 11, 5), sets: L.map((l, i) => ({ weight: 50, repsL: l, repsR: R[i] })) });
+    const up = T.computeSuggestion(carry, [perf([40, 40, 40], [40, 40, 40])], { now, rules });
+    assert.equal(up.kind, "bump");
+    assert.equal(up.target, 55);
+    assert.notEqual(T.computeSuggestion(carry, [perf([40, 40, 40], [30, 40, 40])], { now, rules }).kind, "bump");
+  });
+  test("timed sets carry no e1RM; rep sets unchanged", () => {
+    assert.equal(T.setE1rm({ weight: 50, repsL: 40, repsR: 40 }, carry), 0);
+    assert.equal(T.setE1rm({ weight: 95, reps: 12 }, { id: "rdl" }), T.epleyE1rm(95, 12));
+    assert.equal(T.setE1rm({ weight: 20, repsL: 12, repsR: 9 }, { unilateral: true }), T.epleyE1rm(20, 9));
   });
 }
 

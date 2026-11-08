@@ -135,6 +135,9 @@ export const SEED_CONFIG = {
     { id: "cchair-bent", name: "Captain's Chair Knee Raises", sets: 3, repMin: 8, repMax: 15, increment: 5, unit: "lb", loadType: "bodyweight-plus", current: 0, restSec: 90, progressesTo: "cchair-straight", note: "Forearms on pads, back on the rest — not a bar hang. Posterior tilt at the top, no swing, 3s lower; sloppy reps don't count. Stop if the right QL grips." },
     { id: "cchair-straight", name: "Captain's Chair Straight-Leg Raises", sets: 3, repMin: 8, repMax: 15, increment: 5, unit: "lb", loadType: "bodyweight-plus", current: 0, restSec: 90, progressesTo: "cchair-weighted", note: "Legs straight, same strictness. Add a 2s pause at the top before calling this rung cleared." },
     { id: "cchair-weighted", name: "Weighted Captain's Chair Raises", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "bodyweight-plus", current: 5, restSec: 90, note: "DB pinched between the feet. Normal +5 progression from here." },
+    // Day extra, not a ladder rung: `day` drafts it alongside the active rung
+    // on that day only. Timed + unilateral: seconds per side; loads bump +5.
+    { id: "suitcase-carry", name: "Suitcase Carry", day: "legs", sets: 3, repMin: 30, repMax: 40, timed: true, unilateral: true, increment: 5, unit: "lb", loadType: "db-single", current: 50, restSec: 60, note: "One DB at your side, walk slow. Ribs stacked over pelvis, no lean. Seconds per side. Left hand = trains the right QL — do an extra set left-hand if time allows." },
   ],
   // Frequency / gating thresholds. Stored in config so they sync to the sheet
   // and can be hand-tuned; missing keys are backfilled from here at boot.
@@ -212,7 +215,8 @@ export const SEED_CONFIG = {
 
 /* One-time legs swap for stored configs (exported for tests). Back squat
    heads the squat chain (squat -> goblet -> legpress moves to the front),
-   stepup-db takes slpress's slot, calf-sl-standing takes calf-seated's.
+   stepup-db takes slpress's slot, calf-sl-standing takes calf-seated's,
+   suitcase-carry joins the after-lifts core as a legs-day extra.
    The removed entries are kept whole in config.retired so they can be
    restored; their sessions and records are untouched. Every other entry is
    carried over as the same object. Guarded by config.migrations so a later
@@ -238,9 +242,14 @@ export function migrateLegsSwapNov2026(c) {
   const chain = ["squat-hb-paused", "goblet", "legpress"];
   const head = chain.map((id) => legs.find((e) => e.id === id) || (id === "squat-hb-paused" ? seedOf(id) : null)).filter(Boolean);
   legs = [...head, ...legs.filter((e) => !chain.includes(e.id))];
+  // Suitcase carry joins the after-lifts core (legs only). A config with no
+  // core yet gets it from the core-ladder seed step instead.
+  const carry = SEED_CONFIG.core.find((e) => e.id === "suitcase-carry");
+  const core = Array.isArray(c.core) && !c.core.some((e) => e.id === carry.id) ? [...c.core, carry] : c.core;
   return {
     ...c,
     days: { ...c.days, legs },
+    ...(core !== undefined ? { core } : {}),
     retired,
     migrations: { ...(c.migrations || {}), legsSwapNov2026: true },
   };
@@ -395,6 +404,8 @@ const byDateAsc = (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
 
 // Epley estimate; most reliable in the 2-10 rep range.
 export const epleyE1rm = (w, r) => (Number(w) > 0 && Number(r) > 0 ? Math.round(Number(w) * (1 + Number(r) / 30)) : 0);
+// Per-set e1RM for an exercise row; timed sets log seconds, not reps, so none.
+export const setE1rm = (set, ex) => (ex && ex.timed ? 0 : epleyE1rm(Number(set.weight) || 0, setEffectiveReps(set, !!(ex && ex.unilateral))));
 
 // Warm-up ramp: light bar/DBs, then 50% and 75% of the working weight,
 // snapped to the exercise's real-world increment.
@@ -799,8 +810,16 @@ export function deloadDue(index, rules, now = new Date()) {
 /* ---------- after-lifts core ladder (exported for tests) ---------- */
 
 // The rung currently in rotation: first core entry not yet graduated.
+// Day extras (entries with `day`) are not rungs.
 export function activeCoreRung(coreList) {
-  return (coreList || []).find((ex) => !ex.graduated) || null;
+  return (coreList || []).find((ex) => !ex.graduated && !ex.day) || null;
+}
+
+// Everything the after-lifts core section drafts for a day: the active rung,
+// then that day's extras.
+export function coreSlotsFor(coreList, dayType) {
+  const rung = activeCoreRung(coreList);
+  return [...(rung ? [rung] : []), ...(coreList || []).filter((ex) => ex.day && ex.day === dayType)];
 }
 
 // Consecutive recent performances (newest first) with EVERY set at/above the
@@ -914,7 +933,8 @@ function fmtSetShort(set, ex) {
   if (ex.unilateral) {
     const l = Number(set.repsL) || 0;
     const r = Number(set.repsR) || 0;
-    return l === r ? `${l}/side` : `L${l}·R${r}`;
+    const u = ex.timed ? "s" : "";
+    return l === r ? `${l}${u}/side` : `L${l}${u}·R${r}${u}`;
   }
   if (ex.timed) return `${Number(set.reps) || 0}s`;
   return String(Number(set.reps) || 0);
@@ -1619,10 +1639,10 @@ export default function App() {
         })
       );
       applyGateSlots(exercises, index, now);
-      // After-lifts core: append the active ladder rung (own section, own history).
+      // After-lifts core: append the active ladder rung + day extras (own section, own history).
       if (mode === "gym") {
-        const rung = activeCoreRung(config.core);
-        if (rung && !exercises.some((e) => e.exerciseId === rung.id)) {
+        for (const rung of coreSlotsFor(config.core, dayType)) {
+          if (exercises.some((e) => e.exerciseId === rung.id)) continue;
           const coreSessions = [];
           for (const e of recentEntriesFor(index, rung.id, null, mode, 6)) {
             const s = await loadSession(e.id);
@@ -1738,7 +1758,7 @@ export default function App() {
         for (const s of ex.sets) {
           const w = Number(s.weight) || 0;
           if (w > topW) topW = w;
-          const e1 = epleyE1rm(w, setEffectiveReps(s, !!ex.unilateral));
+          const e1 = setE1rm(s, ex);
           if (e1 > bestE1) bestE1 = e1;
         }
         if (topW <= 0) continue;
@@ -1951,10 +1971,10 @@ export default function App() {
       }
     }
     applyGateSlots(exercises, index, new Date()); // rows with restored sets are left alone
-    // After-lifts core rung (skip if the reopened session already carries it).
+    // After-lifts core rung + day extras (skip any the reopened session already carries).
     if (mode === "gym") {
-      const rung = activeCoreRung(config.core);
-      if (rung && !exercises.some((e) => e.exerciseId === rung.id)) {
+      for (const rung of coreSlotsFor(config.core, dayType)) {
+        if (exercises.some((e) => e.exerciseId === rung.id)) continue;
         const coreSessions = [];
         for (const e of recentEntriesFor(idxSans, rung.id, null, mode, 6)) {
           const s = await loadSession(e.id);
@@ -2011,7 +2031,7 @@ export default function App() {
         for (const st of ex.sets || []) {
           const w = Number(st.weight) || 0;
           if (w > topW) topW = w;
-          const e1 = epleyE1rm(w, setEffectiveReps(st, !!ex.unilateral));
+          const e1 = setE1rm(st, ex);
           if (e1 > bestE1) bestE1 = e1;
         }
         if (topW <= 0) continue;
@@ -3126,7 +3146,7 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, onAccept
 
   const repTarget = ex.amrap
     ? "AMRAP"
-    : ex.repMin === ex.repMax ? `${ex.repMax}${ex.timed ? "s" : ""}` : `${ex.repMin}–${ex.repMax}`;
+    : ex.repMin === ex.repMax ? `${ex.repMax}${ex.timed ? "s" : ""}` : `${ex.repMin}–${ex.repMax}${ex.timed ? "s" : ""}`;
 
   const setPending = (patch) => mutateDraft((d) => patchExercise(d, idx, { pending: { ...d.exercises[idx].pending, ...patch } }));
 
@@ -3419,8 +3439,8 @@ function ExerciseCard({ ex, idx, count, mode, mutateDraft, onSetLogged, onAccept
         )}
         {ex.unilateral ? (
           <div className="flex items-center justify-between">
-            <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Reps · per side</div>
-            <Stepper value={ex.pending.repsL} onChange={(v) => setPending({ repsL: v, repsR: v })} step={1} min={0} />
+            <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{ex.timed ? "Seconds" : "Reps"} · per side</div>
+            <Stepper value={ex.pending.repsL} onChange={(v) => setPending({ repsL: v, repsR: v })} step={ex.timed ? 5 : 1} min={0} />
           </div>
         ) : (
           <div className="flex items-center justify-between">
@@ -3792,8 +3812,8 @@ function SessionViewer({ id, config, weights, loadSession, onClose, onSave, onDe
                           )}
                           {ex.unilateral ? (
                             <div className="mt-1 flex items-center justify-between">
-                              <span className="text-xs uppercase text-zinc-500">Reps / side</span>
-                              <Stepper small value={set.repsL} onChange={(v) => patchEditSet(ei, si, { repsL: v, repsR: v })} step={1} min={0} />
+                              <span className="text-xs uppercase text-zinc-500">{ex.timed ? "Seconds" : "Reps"} / side</span>
+                              <Stepper small value={set.repsL} onChange={(v) => patchEditSet(ei, si, { repsL: v, repsR: v })} step={ex.timed ? 5 : 1} min={0} />
                             </div>
                           ) : (
                             <div className="mt-1 flex items-center justify-between">
@@ -3953,7 +3973,7 @@ function ProgressScreen({ config, index, weights, loadSession, onOpen }) {
         if (!ex) continue;
         const weight = Math.max(...ex.sets.map((st) => Number(st.weight) || 0));
         const volume = Math.max(...ex.sets.map((st) => setVolume(st, ex.unilateral)));
-        const e1rm = Math.max(...ex.sets.map((st) => epleyE1rm(Number(st.weight) || 0, setEffectiveReps(st, !!ex.unilateral))));
+        const e1rm = Math.max(...ex.sets.map((st) => setE1rm(st, ex)));
         pts.push({ id: s.id, label: shortDate(s.date), weight, volume, e1rm });
       }
       if (alive) setPoints(pts.slice(-240));
