@@ -829,16 +829,16 @@ section("core ladder");
     assert.ok(T.SEED_CONFIG.mobility.v >= 5);
     assert.deepEqual(T.SEED_CONFIG.mobility.core, { push: [], pull: [], legs: [] });
   });
-  test("mobility v8: pre-run list added; v7 lift lists untouched", () => {
+  test("mobility v9: pre-run list (v8) kept; lift lists untouched apart from jump rope", () => {
     const m = T.SEED_CONFIG.mobility;
-    assert.equal(m.v, 8);
+    assert.equal(m.v, 9);
     assert.deepEqual(m.run.map((it) => it.id), ["wu-r-calf", "wu-r-kickback", "wu-r-abduction", "wu-r-swings", "wu-r-strides"]);
     assert.ok(m.run.every((it) => !it.gymOnly));
     const ids = (list) => list.map((it) => it.id);
     assert.deepEqual(ids(m.general), ["dr-9090", "dr-psoas", "dr-clam", "dr-fig4", "dr-hamstring", "dr-twist", "dr-butterfly"]);
     assert.deepEqual(ids(m.push), ["wu-p-breath", "wu-p-pec", "wu-p-tspine", "wu-p-needle", "wu-p-extrot", "wu-p-pushup"]);
     assert.deepEqual(ids(m.pull), ["wu-l-breath", "wu-l-lats", "wu-l-deadbug", "wu-l-slbridge", "wu-l-sideplank", "wu-l-bandwalk", "wu-l-quadrot", "wu-l-scapdown", "wu-l-sapd"]);
-    assert.deepEqual(ids(m.legs), ["wu-g-breath", "wu-g-tfl", "wu-g-slbridge", "wu-g-sideplank", "wu-g-bandwalk"]);
+    assert.deepEqual(ids(m.legs), ["wu-g-breath", "wu-g-tfl", "wu-g-slbridge", "wu-g-sideplank", "wu-g-jumprope", "wu-g-bandwalk"]);
     const all = new Set([...m.general, ...m.push, ...m.pull, ...m.legs].map((it) => it.id));
     for (const gone of ["dr-rock", "wu-p-hipflexor", "wu-l-hipflexor", "wu-l-qlrelease", "wu-g-hipflexor", "wu-g-qlrelease", "wu-g-glutefig4",
       "wu-p-facepull", "wu-p-scappush", "wu-l-facepull", "wu-l-tspine"]) {
@@ -980,6 +980,196 @@ section("Apple Health payloads");
     assert.equal(count, 2);
     assert.deepEqual(workouts.map((w) => w.startDate), ["10/3/2026 7:00 AM", "10/3/2026 6:00 PM"]);
     assert.equal(workouts[0].minutes, 40);
+  });
+}
+
+/* ================= legs swap 2026-11: squat chain, step-up, SL calf, jump rope ================= */
+
+section("legs swap: seed");
+test("seed legs order: squat chain first, swaps in place", () => {
+  assert.deepEqual(T.SEED_CONFIG.days.legs.map((e) => e.id),
+    ["squat-hb-paused", "goblet", "legpress", "rdl", "backext-45", "stepup-db", "slcurl", "calf-sl-standing"]);
+  assert.equal(T.SEED_CONFIG.migrations.legsSwapNov2026, true); // fresh seed never re-runs the migration
+});
+test("back squat: fresh id, gated over goblet at streak 3, rdl's plate convention", () => {
+  const legs = T.SEED_CONFIG.days.legs;
+  const sq = legs.find((e) => e.id === "squat-hb-paused");
+  const rdl = legs.find((e) => e.id === "rdl");
+  assert.equal(sq.gated, true);
+  assert.equal(sq.replaces, "goblet");
+  assert.equal(sq.gateStreak, 3);
+  assert.equal(sq.loadType, rdl.loadType);
+  assert.equal(sq.barWeight, rdl.barWeight);
+  assert.equal(sq.current, 95); // total incl. bar, like rdl's 95
+  assert.equal(T.plateBreakdown(sq.current, sq.barWeight), "25");
+  const gob = legs.find((e) => e.id === "goblet");
+  assert.equal(gob.gated, true);
+  assert.equal(gob.replaces, "legpress");
+});
+
+section("legs swap: warm-up");
+test("legs warm-up: jump rope exactly once, immediately before band walk; band walk last", () => {
+  const legs = T.SEED_CONFIG.mobility.legs;
+  const ids = legs.map((it) => it.id);
+  assert.equal(ids.filter((id) => id === "wu-g-jumprope").length, 1);
+  assert.equal(ids.indexOf("wu-g-jumprope") + 1, ids.indexOf("wu-g-bandwalk"));
+  assert.equal(ids[ids.length - 1], "wu-g-bandwalk");
+  const jr = legs.find((it) => it.id === "wu-g-jumprope");
+  assert.equal(jr.dose, "3×60s · 30s rest");
+  assert.ok(!jr.gymOnly);
+});
+test("legs warm-up: every other item unchanged from v8", () => {
+  const v8 = [
+    ["wu-g-breath", "90/90 Breathing", "5–8 breaths"],
+    ["wu-g-tfl", "Foam Roll R TFL", "60s"],
+    ["wu-g-slbridge", "SL Glute Bridge (L-first)", "L 2×10 · R 1×10"],
+    ["wu-g-sideplank", "Side Plank + Hip Abduction (L-first)", "L 2×8 · R 1×8"],
+    ["wu-g-bandwalk", "Lateral Band Walk", "10 steps/way"],
+  ];
+  const rest = T.SEED_CONFIG.mobility.legs.filter((it) => it.id !== "wu-g-jumprope");
+  assert.deepEqual(rest.map((it) => [it.id, it.name, it.dose]), v8);
+});
+
+section("legs swap: migration");
+{
+  // Shape of the live stored config's legs list before the swap.
+  const liveLegs = () => [
+    { id: "rdl", name: "Romanian Deadlift", loadType: "plate-loaded", barWeight: 45, current: 95, gated: true, replaces: "backext-45", gateStreak: 6, gateAccepted: true },
+    { id: "backext-45", name: "45° Back Extension", loadType: "bodyweight-plus", current: 65 },
+    { id: "slpress", name: "Single-Leg Leg Press", loadType: "plate-loaded", current: 210, unilateral: true, repMin: 8, repMax: 12, warmupRamp: true },
+    { id: "goblet", name: "Goblet Squat", loadType: "db-single", current: 70, gated: true, replaces: "legpress", gateAccepted: true },
+    { id: "legpress", name: "Leg Press (bilateral)", loadType: "plate-loaded", current: 400 },
+    { id: "slcurl", name: "Single-Leg Curl", loadType: "machine", current: 50, unilateral: true },
+    { id: "calf-seated", name: "Seated Calf Raise", loadType: "machine", current: 160, repMin: 8, repMax: 12 },
+  ];
+  const liveCfg = () => ({ days: { push: [{ id: "bench-db", current: 60 }], pull: [{ id: "bb-row", current: 95 }], legs: liveLegs() }, calisthenics: {}, ui: { theme: "paper" } });
+
+  test("applied once: new order, new lifts seeded, retired entries whole", () => {
+    const m = T.migrateLegsSwapNov2026(liveCfg());
+    assert.deepEqual(m.days.legs.map((e) => e.id),
+      ["squat-hb-paused", "goblet", "legpress", "rdl", "backext-45", "stepup-db", "slcurl", "calf-sl-standing"]);
+    assert.deepEqual(m.retired.slpress, liveLegs()[2]);
+    assert.deepEqual(m.retired["calf-seated"], liveLegs()[6]);
+    assert.equal(m.retired.slpress.current, 210);
+    assert.equal(m.retired["calf-seated"].current, 160);
+    assert.equal(m.migrations.legsSwapNov2026, true);
+    const sq = m.days.legs[0];
+    assert.equal(sq.current, 95);
+    assert.equal(sq.barWeight, 45);
+    assert.equal(sq.gateAccepted, undefined); // first time through is an offer-tap
+    assert.equal(m.days.legs.find((e) => e.id === "stepup-db").current, 20);
+    assert.equal(m.days.legs.find((e) => e.id === "calf-sl-standing").current, 0);
+  });
+  test("other exercises keep every field, including current (goblet 70, rdl 95)", () => {
+    const m = T.migrateLegsSwapNov2026(liveCfg());
+    const byId = (id) => m.days.legs.find((e) => e.id === id);
+    for (const orig of liveLegs().filter((e) => !["slpress", "calf-seated"].includes(e.id))) {
+      assert.deepEqual(byId(orig.id), orig, orig.id);
+    }
+    assert.equal(byId("goblet").current, 70);
+    assert.equal(byId("rdl").current, 95);
+    const before = liveCfg();
+    assert.deepEqual(m.days.push, before.days.push);
+    assert.deepEqual(m.days.pull, before.days.pull);
+    assert.deepEqual(m.ui, before.ui);
+  });
+  test("second boot is a no-op (same object back)", () => {
+    const m = T.migrateLegsSwapNov2026(liveCfg());
+    assert.equal(T.migrateLegsSwapNov2026(m), m);
+  });
+  test("flag guard: a later deliberate edit is never undone", () => {
+    const m = T.migrateLegsSwapNov2026(liveCfg());
+    const edited = { ...m, days: { ...m.days, legs: m.days.legs.filter((e) => e.id !== "squat-hb-paused") } };
+    assert.equal(T.migrateLegsSwapNov2026(edited), edited);
+  });
+  test("no duplicates when the new lifts already exist", () => {
+    const c = liveCfg();
+    c.days.legs.push({ id: "squat-hb-paused", current: 115, gated: true, replaces: "goblet", gateStreak: 3 }, { id: "stepup-db", current: 30 }, { id: "calf-sl-standing", current: 10 });
+    const m = T.migrateLegsSwapNov2026(c);
+    const ids = m.days.legs.map((e) => e.id);
+    for (const id of ["squat-hb-paused", "stepup-db", "calf-sl-standing"]) assert.equal(ids.filter((x) => x === id).length, 1, id);
+    assert.equal(m.days.legs.find((e) => e.id === "squat-hb-paused").current, 115);
+    assert.equal(m.days.legs.find((e) => e.id === "stepup-db").current, 30);
+    assert.equal(ids[0], "squat-hb-paused");
+  });
+  test("existing retired entries are kept alongside the new ones", () => {
+    const c = { ...liveCfg(), retired: { "row-csdb": { id: "row-csdb", current: 75 } } };
+    const m = T.migrateLegsSwapNov2026(c);
+    assert.deepEqual(Object.keys(m.retired).sort(), ["calf-seated", "row-csdb", "slpress"]);
+  });
+}
+
+section("legs swap: three-level gate chain");
+{
+  const now = at(2026, 11, 8, 12);
+  const qle = (d, ql) => ({ id: "c" + d + ql, date: iso(2026, 11, d), dayType: "legs", mode: "gym", ql });
+  const row = (id, extra = {}) => ({ exerciseId: id, name: id, sets: [], skipped: false, gateHeld: false, ...extra });
+  const chainRows = (extra = {}) => [
+    row("squat-hb-paused", { gated: true, gateStreak: 3, replaces: "goblet", gateAccepted: true, ...extra }),
+    row("goblet", { gated: true, replaces: "legpress", gateAccepted: true }),
+    row("legpress"),
+  ];
+  const state = (exs) => exs.map((e) => (e.skipped ? "skip" : "on"));
+
+  test("(a) streak >= 3, squat accepted: squat active, goblet + legpress skipped", () => {
+    const exs = T.applyGateSlots(chainRows(), [qle(7, "same-or-better"), qle(4, "same-or-better"), qle(1, "same-or-better")], now);
+    assert.deepEqual(state(exs), ["on", "skip", "skip"]);
+    assert.match(exs[1].gateReason, /swapped out for squat-hb-paused/);
+    assert.match(exs[2].gateReason, /swapped out for squat-hb-paused/);
+    assert.ok(!exs[1].gateOpen); // goblet is not re-offered while the squat is in
+  });
+  test("(a') squat active still skips legpress when goblet was never accepted", () => {
+    const rows = chainRows();
+    rows[1].gateAccepted = false;
+    const exs = T.applyGateSlots(rows, [qle(7, "same-or-better"), qle(4, "same-or-better"), qle(1, "same-or-better")], now);
+    assert.deepEqual(state(exs), ["on", "skip", "skip"]);
+  });
+  test("(b) latest passed, streak < 3: squat held, goblet active, legpress skipped", () => {
+    const exs = T.applyGateSlots(chainRows(), [qle(7, "same-or-better"), qle(4, "dismissed"), qle(1, "same-or-better")], now);
+    assert.deepEqual(state(exs), ["skip", "on", "skip"]);
+    assert.equal(exs[0].gateReason, "streak 1/3");
+    assert.match(exs[2].gateReason, /swapped out for goblet/);
+  });
+  test("(c) latest worse: squat and goblet held, legpress active", () => {
+    const exs = T.applyGateSlots(chainRows(), [qle(7, "worse"), qle(4, "same-or-better"), qle(1, "same-or-better")], now);
+    assert.deepEqual(state(exs), ["skip", "skip", "on"]);
+    assert.equal(exs[1].gateReason, "last QL check worse");
+  });
+  test("streak >= 3 but squat not yet accepted: squat offered, goblet active, legpress skipped", () => {
+    const exs = T.applyGateSlots(chainRows({ gateAccepted: false }), [qle(7, "same-or-better"), qle(4, "same-or-better"), qle(1, "same-or-better")], now);
+    assert.deepEqual(state(exs), ["skip", "on", "skip"]);
+    assert.equal(exs[0].gateOpen, true);
+  });
+  test("upperTemplate slot grouping keeps a whole chain in one slot", () => {
+    const cfg = { days: { push: [
+      { id: "a", gated: true, replaces: "b" }, { id: "b", gated: true, replaces: "c" }, { id: "c" }, { id: "d" }, { id: "e" },
+    ], pull: [] } };
+    assert.deepEqual(T.upperTemplate(cfg).map((e) => e.id), ["a", "b", "c", "d", "e"]); // slots: [a,b,c], [d], [e]
+  });
+}
+
+section("legs swap: unilateral db-single suggestions use min(L, R)");
+{
+  const now = at(2026, 11, 8);
+  const rules = { returnAfterDays: 17, holdAfterDays: 12 };
+  const perf = (L, R, weight) => ({ date: iso(2026, 11, 5), sets: L.map((l, i) => ({ weight, repsL: l, repsR: R[i] })) });
+  const seeded = (id) => T.SEED_CONFIG.days.legs.find((e) => e.id === id);
+  for (const id of ["stepup-db", "calf-sl-standing"]) {
+    const ex = seeded(id);
+    test(`${id}: 12/12 both sides bumps; 12 L / 9 R does not`, () => {
+      assert.equal(ex.unilateral, true);
+      assert.equal(ex.loadType, "db-single");
+      const both = T.computeSuggestion(ex, [perf([12, 12, 12], [12, 12, 12], ex.current)], { now, rules });
+      assert.equal(both.kind, "bump");
+      const lopsided = T.computeSuggestion(ex, [perf([12, 12, 12], [9, 12, 12], ex.current)], { now, rules });
+      assert.notEqual(lopsided.kind, "bump");
+      const mirrored = T.computeSuggestion(ex, [perf([9, 12, 12], [12, 12, 12], ex.current)], { now, rules });
+      assert.deepEqual(mirrored, lopsided); // the weaker side decides, whichever it is
+    });
+  }
+  test("setEffectiveReps reads the weaker side", () => {
+    assert.equal(T.setEffectiveReps({ repsL: 12, repsR: 9 }, true), 9);
+    assert.equal(T.setEffectiveReps({ repsL: 8, repsR: 11 }, true), 8);
   });
 }
 

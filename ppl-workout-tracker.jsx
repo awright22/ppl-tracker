@@ -72,7 +72,7 @@ export const SEED_CONFIG = {
   // QL-recovery program: daily reset + per-day warm-ups + per-day core (after lifts)
   // + a standing pre-run list for GPS runs.
   mobility: {
-    v: 8,
+    v: 9,
     general: [
       { id: "dr-9090", name: "90/90 Breathing", dose: "1 min", note: "Feet on wall. Inhale 4s, exhale 8s." },
       { id: "dr-psoas", name: "Supine Psoas Stretch", dose: "R 90s · L 60s", note: "Edge of bed, opposite knee to chest, leg hangs." },
@@ -106,6 +106,7 @@ export const SEED_CONFIG = {
       { id: "wu-g-tfl", name: "Foam Roll R TFL", dose: "60s", note: "Side-lying, roller just below front of hip bone (ASIS). Small rolls over the TFL bulb. Hold tender spots 10s. Releases lateral pelvic tilt contributor." },
       { id: "wu-g-slbridge", name: "SL Glute Bridge (L-first)", dose: "L 2×10 · R 1×10", note: "3s hold at top. Left first. Heel drive, ribs down, no lumbar arch. Hamstring cramp = shorten ROM. Only the left progresses until it matches right." },
       { id: "wu-g-sideplank", name: "Side Plank + Hip Abduction (L-first)", dose: "L 2×8 · R 1×8", note: "Left forearm down first. Top leg abducts, toes forward. Hip sags or rolls back = end set. Knee-bent regression OK (no kneecap load). Only the left progresses until it matches right." },
+      { id: "wu-g-jumprope", name: "Jump Rope", dose: "3×60s · 30s rest", note: "Low two-foot skips, quiet landings on the balls of the feet, knees soft. Progress to alternating feet once it's smooth. Stop if the left arch or kneecap complains." },
       { id: "wu-g-bandwalk", name: "Lateral Band Walk", dose: "10 steps/way", note: "Mini band above ankles, quarter-squat. Lead with heel, toes forward. Control trail leg. Stay low." },
     ],
     // Pre-run. Standing, no equipment — after the lift-day warm-up or on its
@@ -165,18 +166,23 @@ export const SEED_CONFIG = {
       { id: "curl-db", name: "Seated DB Bicep Curl", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "db-pair", current: 35, restSec: 90 },
     ],
     legs: [
+      // Squat lineage, a three-level gated chain: back squat (streak >= 3) ->
+      // goblet (last check passed) -> bilateral leg press. Fresh id on purpose —
+      // the old "Squat" history lives under slpress and stays there. `current`
+      // is the total incl. the 45 bar, same as rdl/bb-row.
+      { id: "squat-hb-paused", name: "Paused High-Bar Back Squat", sets: 3, repMin: 8, repMax: 12, increment: 10, unit: "lb", loadType: "plate-loaded", barWeight: 45, current: 95, restSec: 120, warmupRamp: true, gated: true, replaces: "goblet", gateStreak: 3, note: "2s pause in the hole. Film the bar-only ramp set from behind — hips drifting left or right foot going light = goblet today." },
+      { id: "goblet", name: "Goblet Squat", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "db-single", current: 50, restSec: 120, gated: true, replaces: "legpress" },
+      { id: "legpress", name: "Leg Press (bilateral)", sets: 3, repMin: 10, repMax: 12, increment: 10, unit: "lb", loadType: "plate-loaded", current: 385, restSec: 120 },
       // Gated slot: RDL (streak >= 6) vs the back extension holding its place.
       // Fresh id on purpose — backext-45 WAS the RDL through July and keeps
       // that history; resurrecting it would splice two movements together.
       { id: "rdl", name: "Romanian Deadlift", sets: 3, repMin: 8, repMax: 12, increment: 10, unit: "lb", loadType: "plate-loaded", barWeight: 45, current: 95, restSec: 120, warmupRamp: true, gated: true, replaces: "backext-45", gateStreak: 6, note: "3s eccentric for the first 3 sessions" },
       { id: "backext-45", name: "45° Back Extension", sets: 3, repMin: 12, repMax: 12, increment: 5, unit: "lb", loadType: "bodyweight-plus", current: 50, restSec: 90 },
-      { id: "slpress", name: "Single-Leg Leg Press", sets: 3, repMin: 10, repMax: 12, increment: 10, unit: "lb", loadType: "plate-loaded", current: 140, unilateral: true, restSec: 120, warmupRamp: true },
-      // Gated slot: goblet (last check passed) vs bilateral leg press —
-      // Phase 0/1 of the squat lineage; loads are sovereign, no conversion.
-      { id: "goblet", name: "Goblet Squat", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "db-single", current: 50, restSec: 120, gated: true, replaces: "legpress" },
-      { id: "legpress", name: "Leg Press (bilateral)", sets: 3, repMin: 10, repMax: 12, increment: 10, unit: "lb", loadType: "plate-loaded", current: 385, restSec: 120 },
+      // stepup-db replaced slpress and calf-sl-standing replaced calf-seated
+      // (2026-11); the retired entries live in config.retired.
+      { id: "stepup-db", name: "DB Step-Up", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "db-single", current: 20, unilateral: true, restSec: 90, note: "Goblet-hold. Box ~knee height. Drive through the top heel, no push-off from the back foot. Left first." },
       { id: "slcurl", name: "Single-Leg Curl", sets: 3, repMin: 10, repMax: 12, increment: 5, unit: "lb", loadType: "machine", current: 60, unilateral: true, restSec: 90 },
-      { id: "calf-seated", name: "Seated Calf Raise", sets: 3, repMin: 12, repMax: 15, increment: 10, unit: "lb", loadType: "machine", current: 120, restSec: 90 },
+      { id: "calf-sl-standing", name: "Single-Leg Standing Calf Raise", sets: 3, repMin: 8, repMax: 12, increment: 5, unit: "lb", loadType: "db-single", current: 0, unilateral: true, restSec: 90, note: "Off a step. Full heel stretch at the bottom, 1s pause at top, 3s lower. DB in the same-side hand once set 1 hits 12 at bodyweight. Other hand on a rail for balance only." },
     ],
   },
   calisthenics: {
@@ -200,7 +206,45 @@ export const SEED_CONFIG = {
       { id: "cal-wallsit", name: "Wall Sit", sets: 2, repMin: 45, repMax: 45, timed: true, restSec: 90 },
     ],
   },
+  // One-time boot migrations already reflected in this seed.
+  migrations: { legsSwapNov2026: true },
 };
+
+/* One-time legs swap for stored configs (exported for tests). Back squat
+   heads the squat chain (squat -> goblet -> legpress moves to the front),
+   stepup-db takes slpress's slot, calf-sl-standing takes calf-seated's.
+   The removed entries are kept whole in config.retired so they can be
+   restored; their sessions and records are untouched. Every other entry is
+   carried over as the same object. Guarded by config.migrations so a later
+   deliberate edit is never undone; returns the same object when there is
+   nothing to do. */
+export function migrateLegsSwapNov2026(c) {
+  if (!c || !c.days || (c.migrations && c.migrations.legsSwapNov2026)) return c;
+  const seedOf = (id) => SEED_CONFIG.days.legs.find((e) => e.id === id);
+  const retired = { ...(c.retired || {}) };
+  let legs = [...(c.days.legs || [])];
+  const swap = (oldId, newId, anchorId) => {
+    let i = legs.findIndex((e) => e.id === oldId);
+    if (i >= 0) {
+      retired[oldId] = legs[i];
+      legs.splice(i, 1);
+    } else {
+      i = legs.findIndex((e) => e.id === anchorId);
+    }
+    if (!legs.some((e) => e.id === newId)) legs.splice(i < 0 ? legs.length : i, 0, seedOf(newId));
+  };
+  swap("slpress", "stepup-db", "slcurl");
+  swap("calf-seated", "calf-sl-standing", null);
+  const chain = ["squat-hb-paused", "goblet", "legpress"];
+  const head = chain.map((id) => legs.find((e) => e.id === id) || (id === "squat-hb-paused" ? seedOf(id) : null)).filter(Boolean);
+  legs = [...head, ...legs.filter((e) => !chain.includes(e.id))];
+  return {
+    ...c,
+    days: { ...c.days, legs },
+    retired,
+    migrations: { ...(c.migrations || {}), legsSwapNov2026: true },
+  };
+}
 
 /* ---------- constants & small utils ---------- */
 
@@ -679,10 +723,14 @@ export function qlPromptText(entry) {
 /* Gated-slot evaluation for a fresh draft. A gated lift is active only when
    its gate is open AND its swap has been accepted once (offer-tap); the
    fallback skips while the proper lift is active. Rows that already carry
-   logged sets are never touched (reopen flow). Mutates and returns the list. */
+   logged sets are never touched (reopen flow). Mutates and returns the list.
+   Chains (squat -> goblet -> legpress): an active lift skips its whole
+   fallback chain, and a swapped-out gated fallback is not re-evaluated —
+   its own gate must not resurrect it or its fallback. */
 export function applyGateSlots(exercises, index, now = new Date()) {
+  const swapped = new Set();
   for (const de of exercises) {
-    if (!de.gated || (de.sets && de.sets.length > 0)) continue;
+    if (!de.gated || (de.sets && de.sets.length > 0) || swapped.has(de)) continue;
     const open = gateOpenFor(de, index, now);
     de.gateOpen = open;
     de.gateReason = gateReason(de, index, now);
@@ -690,12 +738,15 @@ export function applyGateSlots(exercises, index, now = new Date()) {
     if (!active) {
       de.skipped = true;
       de.gateHeld = true;
-    } else if (de.replaces) {
-      const fb = exercises.find((x) => x.exerciseId === de.replaces);
-      if (fb && (!fb.sets || fb.sets.length === 0)) {
-        fb.skipped = true;
-        fb.gateHeld = true;
-        fb.gateReason = `swapped out for ${de.name}`;
+    } else {
+      for (let fb = exercises.find((x) => x.exerciseId === de.replaces); fb && fb !== de && !swapped.has(fb);
+        fb = exercises.find((x) => x.exerciseId === fb.replaces)) {
+        swapped.add(fb);
+        if (!fb.sets || fb.sets.length === 0) {
+          fb.skipped = true;
+          fb.gateHeld = true;
+          fb.gateReason = `swapped out for ${de.name}`;
+        }
       }
     }
   }
@@ -785,7 +836,7 @@ export function coreRungSuggestion(ex, perfs, opts = {}) {
 
 /* ---------- Upper template + cross-day history lookup (exported for tests) ---------- */
 
-// Group a day list into slots: a gated lift and its fallback are one slot.
+// Group a day list into slots: a gated lift and its fallback chain are one slot.
 function slotGroups(list) {
   const groups = [];
   const used = new Set();
@@ -793,9 +844,13 @@ function slotGroups(list) {
   for (const ex of list || []) {
     if (used.has(ex.id)) continue;
     if (ex.gated && ex.replaces && byId.has(ex.replaces)) {
-      groups.push([ex, byId.get(ex.replaces)]);
+      const group = [ex];
       used.add(ex.id);
-      used.add(ex.replaces);
+      for (let fb = byId.get(ex.replaces); fb && !used.has(fb.id); fb = byId.get(fb.replaces)) {
+        group.push(fb);
+        used.add(fb.id);
+      }
+      groups.push(group);
     } else {
       groups.push([ex]);
       used.add(ex.id);
@@ -1455,6 +1510,13 @@ export default function App() {
         c = { ...c, days: { ...c.days, legs, pull } };
         persist("config", c, "gated lifts");
       }
+      {
+        const migrated = migrateLegsSwapNov2026(c);
+        if (migrated !== c) {
+          c = migrated;
+          persist("config", c, "legs swap");
+        }
+      }
       // After-lifts core ladder arrives once; absence-guarded so a deliberate
       // emptying of the list is respected on later boots.
       if (c.core === undefined) {
@@ -1605,9 +1667,14 @@ export default function App() {
     mutateDraft((d) => {
       const gated = d.exercises.find((e) => e.exerciseId === exerciseId);
       if (!gated) return d;
+      // The whole fallback chain swaps out (squat -> goblet -> legpress).
+      const chain = new Set();
+      for (let id = gated.replaces; id && id !== exerciseId && !chain.has(id); id = (d.exercises.find((e) => e.exerciseId === id) || {}).replaces) {
+        chain.add(id);
+      }
       const exercises = d.exercises.map((e) => {
         if (e.exerciseId === exerciseId) return { ...e, skipped: false, gateHeld: false, gateAccepted: true };
-        if (gated.replaces === e.exerciseId && e.sets.length === 0) {
+        if (chain.has(e.exerciseId) && e.sets.length === 0) {
           return { ...e, skipped: true, gateHeld: true, gateReason: `swapped out for ${gated.name}` };
         }
         return e;
