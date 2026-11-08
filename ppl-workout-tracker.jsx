@@ -4988,7 +4988,7 @@ function SettingsScreen({ config, saveConfig, themeKey, index, weights, onStartD
 
       <div className="mt-4 flex flex-col gap-2 border-t border-zinc-800 pt-4">
         <button
-          onClick={() => { if (armedReset) { saveConfig(SEED_CONFIG); setArmedReset(false); } else setArmedReset(true); }}
+          onClick={() => { if (armedReset) { saveConfig(config.retired ? { ...SEED_CONFIG, retired: config.retired } : SEED_CONFIG); setArmedReset(false); } else setArmedReset(true); }}
           className={`flex h-12 items-center justify-center gap-2 rounded-2xl border text-sm font-semibold ${TRANS} ${
             armedReset ? "border-red-500 text-red-400" : "border-zinc-800 text-zinc-500"
           }`}
