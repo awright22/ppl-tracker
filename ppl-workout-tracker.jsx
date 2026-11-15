@@ -72,7 +72,7 @@ export const SEED_CONFIG = {
   // QL-recovery program: daily reset + per-day warm-ups + per-day core (after lifts)
   // + a standing pre-run list for GPS runs.
   mobility: {
-    v: 9,
+    v: 10,
     general: [
       { id: "dr-9090", name: "90/90 Breathing", dose: "1 min", note: "Feet on wall. Inhale 4s, exhale 8s." },
       { id: "dr-psoas", name: "Supine Psoas Stretch", dose: "R 90s · L 60s", note: "Edge of bed, opposite knee to chest, leg hangs." },
@@ -118,6 +118,7 @@ export const SEED_CONFIG = {
       { id: "wu-r-abduction", name: "Standing Hip Abduction", dose: "12/side · L first", note: "Same pole. Leg out to the side, toes forward, torso still." },
       { id: "wu-r-swings", name: "Leg Swings", dose: "10 F/B + 10 side/side per leg", note: "Hand on a pole. Controlled range, no bounce." },
       { id: "wu-r-strides", name: "Easy Jog + Strides", dose: "2 min jog · 3×15s", note: "2 min shuffle pace, then 3 strides: build over 5s to ~80%, hold 5–8s, ease off. Walk 30–45s between. Then real pace." },
+      { id: "wu-r-lateral", name: "Lateral Shuffle + Carioca", dose: "2×15 m each way", note: "Low hips, quick feet, no crossing-step lean. Prep for the shuttles.", sportOnly: true },
     ],
     // The old checkbox core moved to config.core as real logged exercises
     // (v5). Side plank and SL glute bridge are back as L-first warm-ups on
@@ -301,8 +302,13 @@ function coreItemsFor(mobility, dayType, mode) {
 // Pre-run checklist snapshot, same shape as a lift session's `warmup` so
 // History and the session viewer render it unchanged. Null when there's no
 // list (older config) or no checklist state was passed.
-export function runWarmupSnapshot(mobility, warmupDone) {
+// sportOnly items (lateral prep for the shuttles) show on sport runs only.
+export function runWarmupItems(mobility, kind) {
   const items = mobility && Array.isArray(mobility.run) ? mobility.run : [];
+  return items.filter((it) => kind === "sport" || !it.sportOnly);
+}
+export function runWarmupSnapshot(mobility, warmupDone, kind) {
+  const items = runWarmupItems(mobility, kind);
   if (!warmupDone || items.length === 0) return null;
   return items.map((it) => ({ id: it.id, name: it.name, done: !!warmupDone[it.id] }));
 }
@@ -457,9 +463,55 @@ function fmtPace(seconds, miles) {
   return `${Math.floor(sp / 60)}:${pad2(sp % 60)}/mi`;
 }
 
-function runHeadline(run) {
+export function runHeadline(run) {
+  if (runKindOf(run) === "sport") {
+    const sp = run.sport || {};
+    return `Sport · strides ${sp.strides || 0}/${SPORT_TARGETS.strides} · shuttles ${sp.shuttles || 0}/${SPORT_TARGETS.shuttles}`
+      + (sp.phase === 3 ? ` · bounds ${sp.bounds || 0}/${SPORT_TARGETS.bounds}` : "");
+  }
   const pace = fmtPace(run.seconds, run.miles);
   return `${fmtW(run.miles)} mi · ${fmtDur(run.seconds)}${pace !== "—" ? ` · ${pace}` : ""}`;
+}
+
+/* ---------- run kinds: easy vs sport (exported for tests) ----------
+   A run record (or index entry, via runKind) with no kind is an easy run —
+   every run logged before kinds existed. No migration. */
+export function runKindOf(runOrEntry) {
+  if (!runOrEntry) return "easy";
+  return (runOrEntry.kind || runOrEntry.runKind) === "sport" ? "sport" : "easy";
+}
+export const SPORT_TARGETS = { strides: 6, shuttles: 4, bounds: 3 };
+// Session-count progression. Derived from history, never stored as state;
+// saveRun snapshots it onto run.sport.phase so history shows what was prescribed.
+export const SPORT_PHASES = {
+  1: { strides: "~80%", shuttles: "~75% — plant and go, no hard cuts", bounds: false },
+  2: { strides: "~90%", shuttles: "Full effort", bounds: false },
+  3: { strides: "Full effort", shuttles: "Full effort", bounds: true },
+};
+// Sport runs strictly before `beforeIso` (default: all of them). 0–3 → 1, 4–7 → 2, 8+ → 3.
+export function sportPhase(index, beforeIso) {
+  const prior = (index || []).filter((e) => e && e.dayType === "run" && runKindOf(e) === "sport" && (!beforeIso || e.date < beforeIso)).length;
+  return prior >= 8 ? 3 : prior >= 4 ? 2 : 1;
+}
+// Sport sessions may skip distance (shuttles in a park, no GPS route); time is always required.
+export function runInputValid(kind, miles, seconds) {
+  if (!(Number(seconds) > 0)) return false;
+  return kind === "sport" ? Number(miles) >= 0 : Number(miles) > 0;
+}
+export function makeRunRecord({ miles, seconds, splits, source, kind, sport, phase }) {
+  const run = { miles, seconds, splits: splits && splits.length ? splits : undefined, source, kind: kind === "sport" ? "sport" : "easy" };
+  if (run.kind !== "sport") return run;
+  const n = (v, max) => Math.min(max, Math.max(0, Math.round(Number(v) || 0)));
+  const sp = sport || {};
+  return {
+    ...run,
+    sport: {
+      phase,
+      strides: n(sp.strides, SPORT_TARGETS.strides),
+      shuttles: n(sp.shuttles, SPORT_TARGETS.shuttles),
+      bounds: phase === 3 ? n(sp.bounds, SPORT_TARGETS.bounds) : 0,
+    },
+  };
 }
 
 /* ---------- progression logic (exported for tests) ---------- */
@@ -2016,7 +2068,7 @@ export default function App() {
     setIndex((prev) => {
       const next = prev.map((e) =>
         e.id === session.id
-          ? { ...e, headline: session.run ? runHeadline(session.run) : headlineFor(session.exercises), setCount: countSets(session.exercises), ql: session.qlCheck !== undefined ? (session.qlCheck ?? null) : e.ql }
+          ? { ...e, headline: session.run ? runHeadline(session.run) : headlineFor(session.exercises), setCount: countSets(session.exercises), ql: session.qlCheck !== undefined ? (session.qlCheck ?? null) : e.ql, ...(session.run ? { runKind: runKindOf(session.run) } : {}) }
           : e
       );
       persist("sessions-index", next, "history");
@@ -2084,31 +2136,33 @@ export default function App() {
   /* --- running --- */
   // Runs are ordinary sessions (dayType "run") so history, sync, and backup
   // all just work; only the summary is stored — never the GPS trail.
-  const saveRun = useCallback(async ({ startIso, endIso, miles, seconds, splits, source, warmupDone }) => {
+  const saveRun = useCallback(async ({ startIso, endIso, miles, seconds, splits, source, warmupDone, kind, sport }) => {
     const startDate = new Date(startIso);
     let id = makeSessionId(startDate);
     for (let bump = 2; index.some((e) => e.id === id); bump += 1) id = `${makeSessionId(startDate)}-${bump}`;
-    const warmup = runWarmupSnapshot(config && config.mobility, warmupDone);
+    const warmup = runWarmupSnapshot(config && config.mobility, warmupDone, kind);
+    const run = makeRunRecord({ miles, seconds, splits, source, kind, sport, phase: sportPhase(index, startIso) });
     const session = {
       id, date: startIso, endDate: endIso, dayType: "run", mode: "run", exercises: [],
       qlCheck: null, // runs load the QL too — next-day check applies
-      run: { miles, seconds, splits: splits && splits.length ? splits : undefined, source },
+      run,
       warmup: warmup || undefined,
     };
     const ok = await store.set(`session:${id}`, session);
     if (!ok) {
       pushToast("Couldn't save the run", {
         tone: "error",
-        action: { label: "Retry", fn: () => saveRun({ startIso, endIso, miles, seconds, splits, source, warmupDone }) },
+        action: { label: "Retry", fn: () => saveRun({ startIso, endIso, miles, seconds, splits, source, warmupDone, kind, sport }) },
       });
       return;
     }
     sessionCache.current.set(id, session);
     const entry = {
       id, date: startIso, dayType: "run", mode: "run",
-      headline: runHeadline({ miles, seconds }),
+      headline: runHeadline(run),
       setCount: 0,
       ql: null,
+      runKind: run.kind,
     };
     setIndex((prev) => {
       const next = [entry, ...prev.filter((e) => e.id !== id)].sort(byDateDesc);
@@ -2116,7 +2170,7 @@ export default function App() {
       return next;
     });
     setRunOverlay(null);
-    pushToast(`Run saved — ${fmtW(miles)} mi in ${fmtDur(seconds)}`, { tone: "success" });
+    pushToast(run.kind === "sport" ? `Sport session saved — ${fmtDur(seconds)}` : `Run saved — ${fmtW(miles)} mi in ${fmtDur(seconds)}`, { tone: "success" });
   }, [config, index, persist, pushToast]);
 
   /* --- scheduled deload week --- */
@@ -2296,11 +2350,12 @@ export default function App() {
           onReopen={reopenSession}
           hasDraft={!!draft}
           pushToast={pushToast}
+          index={index}
         />
       )}
 
       {runOverlay && (
-        <RunOverlay mode={runOverlay} mobility={config && config.mobility} onSave={saveRun} onClose={() => setRunOverlay(null)} pushToast={pushToast} />
+        <RunOverlay mode={runOverlay} mobility={config && config.mobility} index={index} onSave={saveRun} onClose={() => setRunOverlay(null)} pushToast={pushToast} />
       )}
 
       <TabBar tab={tab} setTab={setTab} hasDraft={!!draft} />
@@ -2387,8 +2442,21 @@ function TabBar({ tab, setTab, hasDraft }) {
    likely misses the weekly target (2 runs a day apart need the first by ~day 4);
    7+ days (or never) flags the broken week outright. Staleness never overrides
    the legs gate — the hold chip just notes that a run opens up after legs.
-   Precedence: legs-up-next > target hit > ran-recently (silent) > go. */
+   Precedence: legs-up-next > target hit > ran-recently (silent) > go.
+   go/urgent chips also carry runKind (suggestRunKind) and name it in the label. */
 const RUN_WEEKLY_TARGET = 2;
+/* Which kind of run to do. One sport session a week: none in the trailing 7
+   days → sport, unless legs was trained in the last 24 h (sprints and cuts on
+   fried legs) → easy, with a note. A sport run already this week → easy. */
+export function suggestRunKind(index, now = new Date()) {
+  const sevenAgoIso = new Date(now.getTime() - 7 * 86400000).toISOString();
+  const sport7 = index.some((e) => e.dayType === "run" && runKindOf(e) === "sport" && e.date >= sevenAgoIso);
+  if (sport7) return { runKind: "easy", note: null };
+  const dayAgoIso = new Date(now.getTime() - 86400000).toISOString();
+  const legs24 = index.some((e) => e.dayType === "legs" && e.date >= dayAgoIso && e.date <= now.toISOString());
+  if (legs24) return { runKind: "easy", note: "Sport session after legs recovery — easy today" };
+  return { runKind: "sport", note: null };
+}
 export function runSuggestion(index, nextDay, now = new Date()) {
   const runs = index.filter((e) => e.dayType === "run");
   const lastRun = runs[0] || null; // index is newest-first
@@ -2411,9 +2479,10 @@ export function runSuggestion(index, nextDay, now = new Date()) {
     return k === today || k === yesterday;
   });
   if (ranRecently) return null;
-  if (daysSinceRun >= 7) return { kind: "urgent", label: "No runs this week — run today" };
-  if (stale) return { kind: "urgent", label: `Run today — been ${Math.floor(daysSinceRun)} days` };
-  return { kind: "go", label: `Run today — ${runs7 + 1} of ${RUN_WEEKLY_TARGET} this week` };
+  const { runKind, note } = suggestRunKind(index, now);
+  if (daysSinceRun >= 7) return { kind: "urgent", label: `No runs this week — run today · ${runKind}`, runKind, note };
+  if (stale) return { kind: "urgent", label: `Run today — ${runKind} · been ${Math.floor(daysSinceRun)} days`, runKind, note };
+  return { kind: "go", label: `Run today — ${runKind} · ${runs7 + 1} of ${RUN_WEEKLY_TARGET} this week`, runKind, note };
 }
 
 function HomeScreen({ config, saveConfig, index, mode, setMode, onStart, starting, qlPrompt, answerQl, justFinished, dismissJustFinished, weights, pushToast, onRun, onLogEvent, onStartDeload }) {
@@ -3537,7 +3606,7 @@ function findConfigEx(config, exerciseId) {
   return (config.core || []).find((e) => e.id === exerciseId) || null;
 }
 
-function SessionViewer({ id, config, weights, loadSession, onClose, onSave, onDelete, onReopen, hasDraft, pushToast }) {
+function SessionViewer({ id, config, weights, loadSession, onClose, onSave, onDelete, onReopen, hasDraft, pushToast, index }) {
   const [session, setSession] = useState(null);
   const [missing, setMissing] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -3566,15 +3635,20 @@ function SessionViewer({ id, config, weights, loadSession, onClose, onSave, onDe
     if (edit.run) {
       const miles = round2(Number(edit.run.miles) || 0);
       const seconds = Math.round(Number(edit.run.seconds) || 0);
-      if (!(miles > 0) || !(seconds > 0)) {
-        pushToast("Distance and time must be above zero", { tone: "error" });
+      const kind = runKindOf(edit.run);
+      if (!runInputValid(kind, miles, seconds)) {
+        pushToast(kind === "sport" ? "Time must be above zero" : "Distance and time must be above zero", { tone: "error" });
         return;
       }
       // Mile splits described the original GPS recording — drop them once the
       // numbers they summed to are hand-corrected.
       const orig = session.run || {};
       const changed = miles !== orig.miles || seconds !== orig.seconds;
-      cleaned = { ...edit, run: { ...edit.run, miles, seconds, splits: changed ? undefined : edit.run.splits } };
+      // Phase stays as prescribed at save time; a run switched to sport here
+      // gets the phase its date would have had.
+      const phase = (edit.run.sport && edit.run.sport.phase) || sportPhase(index, session.date);
+      const { kind: _k, sport: _s, ...base } = edit.run;
+      cleaned = { ...edit, run: { ...base, ...makeRunRecord({ ...base, miles, seconds, kind, sport: edit.run.sport, phase }), splits: changed ? undefined : edit.run.splits } };
     } else {
       cleaned = { ...edit, exercises: edit.exercises.filter((e) => e.sets.length > 0) };
     }
@@ -3706,12 +3780,13 @@ function SessionViewer({ id, config, weights, loadSession, onClose, onSave, onDe
             {s.run && editing && (
               <div className="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
                 <div className="text-sm font-semibold text-zinc-100">Edit run</div>
-                <Field label="Distance">
+                <RunKindToggle value={runKindOf(edit.run)} onChange={(k) => setEdit((p) => ({ ...p, run: { ...p.run, kind: k } }))} />
+                <Field label={runKindOf(edit.run) === "sport" ? "Distance (optional)" : "Distance"}>
                   <Stepper
                     small
                     value={edit.run.miles}
                     onChange={(v) => setEdit((p) => ({ ...p, run: { ...p.run, miles: v } }))}
-                    step={0.1} min={0.05} max={200} unit="mi"
+                    step={0.1} min={runKindOf(edit.run) === "sport" ? 0 : 0.05} max={200} unit="mi"
                   />
                 </Field>
                 <Field label="Minutes">
@@ -3736,6 +3811,13 @@ function SessionViewer({ id, config, weights, loadSession, onClose, onSave, onDe
                 <div className="text-xs text-zinc-600">
                   Handy for correcting a GPS reading against another tracker. Editing clears stored mile splits — they described the original recording.
                 </div>
+                {runKindOf(edit.run) === "sport" && (
+                  <SportBlocks
+                    phase={(edit.run.sport && edit.run.sport.phase) || sportPhase(index, s.date)}
+                    counts={edit.run.sport || {}}
+                    onChange={(c) => setEdit((p) => ({ ...p, run: { ...p.run, sport: { ...(p.run.sport || {}), ...c } } }))}
+                  />
+                )}
               </div>
             )}
             {s.run && !editing && (
@@ -3762,6 +3844,11 @@ function SessionViewer({ id, config, weights, loadSession, onClose, onSave, onDe
                         </div>
                       ))}
                     </div>
+                  </div>
+                )}
+                {runKindOf(s.run) === "sport" && (
+                  <div className="px-1 text-sm font-semibold text-zinc-300">
+                    {runHeadline(s.run)}{s.run.sport && s.run.sport.phase ? ` · phase ${s.run.sport.phase}` : ""}
                   </div>
                 )}
                 <div className="px-1 text-xs text-zinc-600">
@@ -4195,17 +4282,76 @@ export function haversineMeters(a, b) {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
+/* Easy / Sport switch — run tracker start screen and the run edit form. */
+function RunKindToggle({ value, onChange }) {
+  return (
+    <div className="grid grid-cols-2 gap-1 rounded-xl bg-zinc-950 p-1" role="radiogroup" aria-label="run kind">
+      {[["easy", "Easy"], ["sport", "Sport"]].map(([k, label]) => (
+        <button
+          key={k}
+          role="radio"
+          aria-checked={value === k}
+          onClick={() => onChange(k)}
+          className={`h-10 rounded-lg text-sm font-semibold ${TRANS} ${value === k ? "bg-lime-400 text-black" : "text-zinc-400 active:bg-zinc-800"}`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* Structured sport session: blocks in order, a tap counter on each countable
+   block, no timers (GPS/elapsed keeps running as on any run). */
+function SportBlocks({ phase, counts, onChange }) {
+  const P = SPORT_PHASES[phase] || SPORT_PHASES[1];
+  const row = (key, title, dose, target) => (
+    <div className="flex items-center gap-3 px-4 py-3">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-semibold text-zinc-100">{title}</div>
+        <div className="text-xs text-zinc-500">{dose}</div>
+      </div>
+      {key && (
+        <div className="flex shrink-0 items-center gap-2">
+          <Stepper small value={counts[key] || 0} onChange={(v) => onChange({ ...counts, [key]: v })} step={1} min={0} max={SPORT_TARGETS[key]} />
+          <span className="w-6 text-xs tabular-nums text-zinc-500">/{target}</span>
+        </div>
+      )}
+    </div>
+  );
+  return (
+    <section className="rounded-2xl border border-zinc-800 bg-zinc-900">
+      <div className="px-4 py-3">
+        <div className="text-sm font-semibold text-zinc-100">Sport session · Phase {phase}</div>
+        <div className="text-xs text-zinc-500">After the warm-up, in order</div>
+      </div>
+      <div className="flex flex-col divide-y divide-zinc-800 border-t border-zinc-800">
+        {row(null, "Easy jog", "10 min · conversational", null)}
+        {row("strides", "Strides", `6 × 15 s · walk-back recovery · ${P.strides}`, SPORT_TARGETS.strides)}
+        {row("shuttles", "5-10-5 shuttles", `4 reps · ~60 s rest · ${P.shuttles}`, SPORT_TARGETS.shuttles)}
+        {P.bounds && row("bounds", "Lateral bounds", "3 × 5/side · stick each landing", SPORT_TARGETS.bounds)}
+      </div>
+    </section>
+  );
+}
+
 /* Full-screen run tracker. GPS distance is anchor-based: a fix only counts
    once you've moved past the jitter floor from the last credited point, so
    standing at a stoplight doesn't accrue phantom distance, while slow
    movement still accumulates correctly. Implausible jumps (>12 m/s) re-anchor
    without credit. Timing is wall-clock, so it survives brief backgrounding —
    distance across a gap is bridged as the straight line between fixes. */
-function RunOverlay({ mode, mobility, onSave, onClose, pushToast }) {
+function RunOverlay({ mode, mobility, index, onSave, onClose, pushToast }) {
   const [entryMode, setEntryMode] = useState(mode); // "live" | "manual" — denied GPS can fall back
+  // Easy vs sport: defaults to what the home chip recommends; locked once a GPS run starts.
+  const [kind, setKind] = useState(() => suggestRunKind(index || []).runKind);
+  const [sportCounts, setSportCounts] = useState({ strides: 0, shuttles: 0, bounds: 0 });
+  const curPhase = sportPhase(index || []);
+  const sportCard = kind === "sport" ? <SportBlocks phase={curPhase} counts={sportCounts} onChange={setSportCounts} /> : null;
+  const kindToggle = <RunKindToggle value={kind} onChange={setKind} />;
   // Pre-run checklist, live and manual alike. Overlay-local on purpose: a run
   // in progress doesn't survive a reload either.
-  const runWarmup = (mobility && mobility.run) || [];
+  const runWarmup = runWarmupItems(mobility, kind);
   const [warmupDone, setWarmupDone] = useState({});
   const [warmupOpen, setWarmupOpen] = useState(true);
   const toggleWarmup = (id) => setWarmupDone((d) => ({ ...d, [id]: !d[id] }));
@@ -4353,6 +4499,8 @@ function RunOverlay({ mode, mobility, onSave, onClose, pushToast }) {
         splits: t.current.splits,
         source: "gps",
         warmupDone,
+        kind,
+        sport: sportCounts,
       });
     } finally { setSaving(false); }
   };
@@ -4360,7 +4508,7 @@ function RunOverlay({ mode, mobility, onSave, onClose, pushToast }) {
   const saveManual = async () => {
     if (saving) return;
     const secs = Math.round(Number(manMins) * 60);
-    if (!(secs > 0) || !(Number(manMiles) > 0)) { pushToast("Enter a distance and a time first", { tone: "error" }); return; }
+    if (!runInputValid(kind, Number(manMiles), secs)) { pushToast(kind === "sport" ? "Enter a time first" : "Enter a distance and a time first", { tone: "error" }); return; }
     setSaving(true);
     try {
       const isToday = dayStr === todayStr;
@@ -4370,6 +4518,7 @@ function RunOverlay({ mode, mobility, onSave, onClose, pushToast }) {
       await onSave({
         startIso: startAt.toISOString(), endIso: end.toISOString(),
         miles: round2(Number(manMiles)), seconds: secs, splits: [], source: "manual", warmupDone,
+        kind, sport: sportCounts,
       });
     } finally { setSaving(false); }
   };
@@ -4395,7 +4544,7 @@ function RunOverlay({ mode, mobility, onSave, onClose, pushToast }) {
               {armedClose ? <span className="px-1 text-xs font-bold">Tap again to discard</span> : <ChevronLeft size={22} />}
             </button>
             <div className="min-w-0 flex-1">
-              <div className="text-base font-bold">Run</div>
+              <div className="text-base font-bold">{kind === "sport" ? "Sport run" : "Run"}</div>
               <div className="text-xs text-zinc-500">{entryMode === "live" ? "GPS-tracked" : "Manual entry"}</div>
             </div>
             {entryMode === "live" && acc != null && phase !== "denied" && (
@@ -4415,6 +4564,7 @@ function RunOverlay({ mode, mobility, onSave, onClose, pushToast }) {
                     Your location never leaves the phone; only distance, time, and mile splits are saved.
                   </div>
                 </div>
+                {kindToggle}
                 {warmupCard}
                 <button onClick={start} className={`h-14 w-full rounded-2xl bg-lime-400 text-base font-bold text-black active:bg-lime-300 ${TRANS}`}>
                   Start run
@@ -4459,6 +4609,8 @@ function RunOverlay({ mode, mobility, onSave, onClose, pushToast }) {
                   {gpsNote ? <div className="mt-4 text-xs text-amber-300">{gpsNote}</div> : null}
                 </div>
 
+                {sportCard}
+
                 {t.current.splits.length > 0 && (
                   <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
                     <div className="text-sm font-semibold text-zinc-100">Mile splits</div>
@@ -4499,7 +4651,9 @@ function RunOverlay({ mode, mobility, onSave, onClose, pushToast }) {
 
         {entryMode === "manual" && (
           <div className="flex flex-col gap-4 pt-4">
+            {kindToggle}
             {warmupCard}
+            {sportCard}
             <div className="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
               <div className="flex items-center justify-between gap-3">
                 <div className="text-sm font-semibold text-zinc-100">Log a run</div>
@@ -4511,8 +4665,8 @@ function RunOverlay({ mode, mobility, onSave, onClose, pushToast }) {
                   className="h-11 rounded-xl border border-zinc-700 bg-zinc-950 px-3 text-sm text-zinc-200 outline-none"
                 />
               </div>
-              <Field label="Distance">
-                <Stepper small value={manMiles} onChange={setManMiles} step={0.1} min={0.1} max={200} unit="mi" />
+              <Field label={kind === "sport" ? "Distance (optional)" : "Distance"}>
+                <Stepper small value={manMiles} onChange={setManMiles} step={0.1} min={kind === "sport" ? 0 : 0.1} max={200} unit="mi" />
               </Field>
               <Field label="Time">
                 <Stepper small value={manMins} onChange={setManMins} step={1} min={1} max={1440} unit="min" />
@@ -4523,7 +4677,7 @@ function RunOverlay({ mode, mobility, onSave, onClose, pushToast }) {
                 disabled={saving}
                 className={`h-12 w-full rounded-xl bg-lime-400 text-sm font-bold text-black active:bg-lime-300 ${TRANS} ${saving ? "opacity-60" : ""}`}
               >
-                {saving ? "Saving…" : `Save run — ${fmtW(manMiles)} mi in ${fmtDur(Number(manMins) * 60)}`}
+                {saving ? "Saving…" : kind === "sport" ? `Save sport run — ${fmtDur(Number(manMins) * 60)}` : `Save run — ${fmtW(manMiles)} mi in ${fmtDur(Number(manMins) * 60)}`}
               </button>
             </div>
             {mode === "live" && (

@@ -829,10 +829,10 @@ section("core ladder");
     assert.ok(T.SEED_CONFIG.mobility.v >= 5);
     assert.deepEqual(T.SEED_CONFIG.mobility.core, { push: [], pull: [], legs: [] });
   });
-  test("mobility v9: pre-run list (v8) kept; lift lists untouched apart from jump rope", () => {
+  test("mobility v10: pre-run list (v8) + sport-only lateral prep; lift lists untouched apart from jump rope", () => {
     const m = T.SEED_CONFIG.mobility;
-    assert.equal(m.v, 9);
-    assert.deepEqual(m.run.map((it) => it.id), ["wu-r-calf", "wu-r-kickback", "wu-r-abduction", "wu-r-swings", "wu-r-strides"]);
+    assert.equal(m.v, 10);
+    assert.deepEqual(m.run.map((it) => it.id), ["wu-r-calf", "wu-r-kickback", "wu-r-abduction", "wu-r-swings", "wu-r-strides", "wu-r-lateral"]);
     assert.ok(m.run.every((it) => !it.gymOnly));
     const ids = (list) => list.map((it) => it.id);
     assert.deepEqual(ids(m.general), ["dr-9090", "dr-psoas", "dr-clam", "dr-fig4", "dr-hamstring", "dr-twist", "dr-butterfly"]);
@@ -1234,6 +1234,134 @@ section("legs swap: unilateral db-single suggestions use min(L, R)");
   test("setEffectiveReps reads the weaker side", () => {
     assert.equal(T.setEffectiveReps({ repsL: 12, repsR: 9 }, true), 9);
     assert.equal(T.setEffectiveReps({ repsL: 8, repsR: 11 }, true), 8);
+  });
+}
+
+/* ================= run kinds: easy vs sport ================= */
+
+section("run kind + sport record");
+{
+  test("legacy run / entry with no kind reads as easy", () => {
+    assert.equal(T.runKindOf({ miles: 3, seconds: 1800, source: "gps" }), "easy");
+    assert.equal(T.runKindOf(run(iso(2026, 11, 1))), "easy");
+    assert.equal(T.runKindOf(undefined), "easy");
+    assert.equal(T.runHeadline({ miles: 3, seconds: 1800 }), "3 mi · 30:00 · 10:00/mi"); // easy headline unchanged
+  });
+  test("sport run saves with kind + run.sport counts (clamped), headline names the blocks", () => {
+    const r = T.makeRunRecord({ miles: 0, seconds: 1500, splits: [], source: "manual", kind: "sport", sport: { strides: 6, shuttles: 9, bounds: 2 }, phase: 1 });
+    assert.equal(r.kind, "sport");
+    assert.deepEqual(r.sport, { phase: 1, strides: 6, shuttles: 4, bounds: 0 }); // bounds only count in phase 3
+    assert.equal(r.splits, undefined);
+    assert.equal(T.runKindOf(r), "sport");
+    assert.equal(T.runHeadline(r), "Sport · strides 6/6 · shuttles 4/4");
+    const p3 = T.makeRunRecord({ miles: 1.2, seconds: 1800, source: "gps", kind: "sport", sport: { strides: 5, shuttles: 3, bounds: 3 }, phase: 3 });
+    assert.equal(T.runHeadline(p3), "Sport · strides 5/6 · shuttles 3/4 · bounds 3/3");
+  });
+  test("easy run record: kind easy, no sport block", () => {
+    const r = T.makeRunRecord({ miles: 3, seconds: 1800, splits: [], source: "gps", kind: "easy", sport: { strides: 3 }, phase: 2 });
+    assert.equal(r.kind, "easy");
+    assert.equal(r.sport, undefined);
+  });
+}
+
+section("runInputValid");
+{
+  test("sport: miles 0 with seconds > 0 saves; seconds still required", () => {
+    assert.equal(T.runInputValid("sport", 0, 1500), true);
+    assert.equal(T.runInputValid("sport", 1.5, 1500), true);
+    assert.equal(T.runInputValid("sport", 0, 0), false);
+  });
+  test("easy: miles 0 still rejected; existing rule otherwise", () => {
+    assert.equal(T.runInputValid("easy", 0, 1800), false);
+    assert.equal(T.runInputValid("easy", 3, 0), false);
+    assert.equal(T.runInputValid("easy", 3, 1800), true);
+    assert.equal(T.runInputValid(undefined, 0, 1800), false); // legacy = easy
+  });
+}
+
+section("sportPhase");
+{
+  const sportRuns = (n) => Array.from({ length: n }, (_, i) => run(iso(2026, 10, 1 + i), { runKind: "sport" }));
+  const easyRuns = (n) => Array.from({ length: n }, (_, i) => run(iso(2026, 9, 1 + i)));
+  test("0 / 4 / 8 prior sport runs -> phase 1 / 2 / 3", () => {
+    assert.equal(T.sportPhase(sportRuns(0)), 1);
+    assert.equal(T.sportPhase(sportRuns(3)), 1);
+    assert.equal(T.sportPhase(sportRuns(4)), 2);
+    assert.equal(T.sportPhase(sportRuns(7)), 2);
+    assert.equal(T.sportPhase(sportRuns(8)), 3);
+  });
+  test("easy runs and lifts don't count toward phase", () => {
+    assert.equal(T.sportPhase([...easyRuns(12), lift("legs", iso(2026, 10, 20))]), 1);
+    assert.equal(T.sportPhase([...sportRuns(3), ...easyRuns(10)]), 1);
+  });
+  test("only runs before the given date count (backfill / edit snapshot)", () => {
+    const idx = sportRuns(8); // Oct 1..8
+    assert.equal(T.sportPhase(idx, iso(2026, 10, 5)), 2); // Oct 1..4 prior
+    assert.equal(T.sportPhase(idx, iso(2026, 10, 1)), 1);
+  });
+}
+
+section("runSuggestion: run kind");
+{
+  const now = at(2026, 11, 12, 9); // Thursday
+  const easyRun = (d) => run(iso(2026, 11, d), { runKind: "easy" });
+  const sportRun = (d) => run(iso(2026, 11, d), { runKind: "sport" });
+  test("no sport run in 7 days -> sport (legacy kind-less runs count as easy)", () => {
+    const chip = T.runSuggestion([run(iso(2026, 11, 9))], "push", now);
+    assert.equal(chip.kind, "go");
+    assert.equal(chip.runKind, "sport");
+    assert.equal(chip.label, "Run today — sport · 2 of 2 this week");
+    assert.equal(chip.note, null);
+  });
+  test("sport run already in 7 days -> easy", () => {
+    const chip = T.runSuggestion([sportRun(9)], "pull", now);
+    assert.equal(chip.runKind, "easy");
+    assert.equal(chip.label, "Run today — easy · 2 of 2 this week");
+  });
+  test("sport run 8 days ago no longer counts -> sport", () => {
+    assert.equal(T.runSuggestion([easyRun(10), sportRun(4)], "push", now).runKind, "sport");
+  });
+  test("legs within 24 h -> easy with the recovery note", () => {
+    const idx = [lift("legs", new Date(2026, 10, 11, 18).toISOString()), easyRun(9)];
+    const chip = T.runSuggestion(idx, "push", now);
+    assert.equal(chip.kind, "go");
+    assert.equal(chip.runKind, "easy");
+    assert.equal(chip.note, "Sport session after legs recovery — easy today");
+  });
+  test("legs more than 24 h ago doesn't block sport", () => {
+    const idx = [lift("legs", new Date(2026, 10, 11, 8).toISOString()), easyRun(9)];
+    assert.equal(T.runSuggestion(idx, "push", now).runKind, "sport");
+  });
+  test("urgent chips name the kind; existing gates and precedence unchanged", () => {
+    assert.equal(T.runSuggestion([], "push", now).label, "No runs this week — run today · sport");
+    assert.equal(T.runSuggestion([easyRun(6)], "push", now).label, "Run today — sport · been 5 days");
+    assert.deepEqual(T.runSuggestion([easyRun(6)], "legs", now), { kind: "hold", label: "No run — legs up next", note: "Been 5 days — a run opens up right after legs" });
+    assert.deepEqual(T.runSuggestion([easyRun(10), sportRun(8)], "push", now), { kind: "done", label: "Runs done ✓" });
+    assert.equal(T.runSuggestion([easyRun(11)], "push", now), null); // ran yesterday
+  });
+  test("suggestRunKind matches the chip (tracker default)", () => {
+    assert.equal(T.suggestRunKind([sportRun(9)], now).runKind, "easy");
+    assert.equal(T.suggestRunKind([], now).runKind, "sport");
+  });
+}
+
+section("run warm-up: sport-only lateral prep");
+{
+  const m = T.SEED_CONFIG.mobility;
+  test("wu-r-lateral appears for sport runs only, exactly once, last", () => {
+    const sport = T.runWarmupItems(m, "sport").map((it) => it.id);
+    assert.equal(sport.filter((id) => id === "wu-r-lateral").length, 1);
+    assert.equal(sport[sport.length - 1], "wu-r-lateral");
+    assert.ok(!T.runWarmupItems(m, "easy").some((it) => it.id === "wu-r-lateral"));
+    assert.ok(!T.runWarmupItems(m, undefined).some((it) => it.id === "wu-r-lateral"));
+    const it = m.run.find((x) => x.id === "wu-r-lateral");
+    assert.deepEqual(it, { id: "wu-r-lateral", name: "Lateral Shuffle + Carioca", dose: "2×15 m each way", note: "Low hips, quick feet, no crossing-step lean. Prep for the shuttles.", sportOnly: true });
+  });
+  test("snapshot follows the kind: easy 5 rows, sport 6", () => {
+    assert.equal(T.runWarmupSnapshot(m, {}, "easy").length, 5);
+    const snap = T.runWarmupSnapshot(m, { "wu-r-lateral": true }, "sport");
+    assert.equal(snap.length, 6);
+    assert.deepEqual(snap[5], { id: "wu-r-lateral", name: "Lateral Shuffle + Carioca", done: true });
   });
 }
 
